@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/trailpad/memory/internal/store"
 )
 
 //go:embed migrations/*.sql
@@ -178,3 +179,9 @@ func rollback(ctx context.Context, conn *pgxpool.Conn) error {
 	}
 	return nil
 }
+
+var (
+	_ store.Store    = (*Store)(nil)
+	_ store.Recaller = (*Store)(nil)
+	_ store.Spaces   = (*Store)(nil)
+)

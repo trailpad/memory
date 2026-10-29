@@ -27,6 +27,7 @@
       "type": "object",
       "properties": {
         "system": { "type": "string" },
+        "installation": { "type": "string" },
         "native_id": { "type": "string" },
         "url": { "type": "string" },
         "recorded_at": { "$ref": "#/$defs/instant" },

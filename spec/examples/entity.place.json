@@ -1,4 +1,5 @@
 {
+  "bucket": "bk_shop",
   "id": "pl_pr_4521_thread_3",
   "class": "place",
   "type": "github.pull_request.review_thread",

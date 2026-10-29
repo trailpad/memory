@@ -17,8 +17,12 @@ type Capture struct {
 }
 
 // Ingest stores a batch, or returns record.Problems naming everything wrong
-// with it and stores nothing.
-func (c *Capture) Ingest(ctx context.Context, b store.Batch) (store.Written, error) {
+// with it and stores nothing. A reference to a record the access may not
+// read is reported exactly as one to a record that does not exist.
+func (c *Capture) Ingest(ctx context.Context, access store.Access, b store.Batch) (store.Written, error) {
+	if err := access.Check(); err != nil {
+		return store.Written{}, err
+	}
 	var problems record.Problems
 	add := func(prefix string, found record.Problems) {
 		for _, p := range found {
@@ -113,7 +117,7 @@ func (c *Capture) Ingest(ctx context.Context, b store.Batch) (store.Written, err
 			}
 		}
 	}
-	stored, err := c.Store.Kinds(ctx, outside)
+	stored, err := c.Store.Kinds(ctx, access, outside)
 	if err != nil {
 		return store.Written{}, err
 	}
@@ -135,7 +139,7 @@ func (c *Capture) Ingest(ctx context.Context, b store.Batch) (store.Written, err
 	if len(problems) > 0 {
 		return store.Written{}, problems
 	}
-	return c.Store.Write(ctx, b)
+	return c.Store.Write(ctx, access, b)
 }
 
 func describe(k record.Kind) string {

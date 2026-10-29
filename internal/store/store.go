@@ -59,15 +59,18 @@ type Written struct {
 	Unchanged []string `json:"unchanged,omitempty"`
 }
 
-// Store keeps records.
+// Store keeps records. Every method acts within one workspace and keeps to
+// what the access allows.
 type Store interface {
-	Write(ctx context.Context, batch Batch) (Written, error)
-	Entity(ctx context.Context, id string) (record.Entity, error)
-	Event(ctx context.Context, id string) (record.Event, error)
+	Write(ctx context.Context, access Access, batch Batch) (Written, error)
+	Entity(ctx context.Context, access Access, id string) (record.Entity, error)
+	Event(ctx context.Context, access Access, id string) (record.Event, error)
 	// Memory is the version current at asOf (the store's clock), or the
 	// current one when asOf is nil.
-	Memory(ctx context.Context, id string, asOf *time.Time) (record.Memory, error)
-	// Kinds says what kind of record each stored id is. Ids nothing has are
-	// left out.
-	Kinds(ctx context.Context, ids []string) (map[string]record.Kind, error)
+	Memory(ctx context.Context, access Access, id string, asOf *time.Time) (record.Memory, error)
+	// Kinds says what kind of record each stored id is. Ids nothing has, or
+	// that name a record the access may not read, are left out alike. A
+	// memory counts when any of its versions may be read, since a memory can
+	// be made from an earlier version.
+	Kinds(ctx context.Context, access Access, ids []string) (map[string]record.Kind, error)
 }

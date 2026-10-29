@@ -1,4 +1,5 @@
 {
+  "bucket": "bk_shop",
   "id": "mm_retry_limit",
   "type": "constraint",
   "statement": "Retries to the payment gateway stop after three attempts.",
@@ -10,6 +11,7 @@
     { "event": "ev_01J", "role": "established" },
     { "event": "ev_02K", "role": "reinforced" }
   ],
+  "depends_on": [{ "record": "ev_meeting_0421" }],
   "subjects": [{ "subject": "sb_file_retry_go", "role": "about" }],
   "participants": [{ "actor": "ac_ana", "role": "decider" }],
   "appraisals": ["ap_2"],

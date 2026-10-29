@@ -70,6 +70,9 @@ type Filters struct {
 	Types    []record.Type `json:"types,omitempty"`
 	ValidAt  ValidAt       `json:"valid_at"`
 	Occurred *Span         `json:"occurred,omitempty"`
+	// Buckets narrows the recall to these buckets, never past what the
+	// caller may read.
+	Buckets []string `json:"buckets,omitempty"`
 
 	// Filters the spec defines that this version cannot apply yet. A request
 	// using one is refused rather than answered without it.

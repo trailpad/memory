@@ -3,8 +3,9 @@
   "$id": "https://schema.trailpad.ai/memory/0.1/link.json",
   "title": "Link",
   "type": "object",
-  "required": ["id", "from", "type", "to"],
+  "required": ["bucket", "id", "from", "type", "to"],
   "properties": {
+    "bucket": { "$ref": "common.json#/$defs/id" },
     "id": { "$ref": "common.json#/$defs/id" },
     "from": { "$ref": "common.json#/$defs/id" },
     "type": { "$ref": "common.json#/$defs/type" },

@@ -3,8 +3,9 @@
   "$id": "https://schema.trailpad.ai/memory/0.1/entity.json",
   "title": "Entity: a place, actor, subject or a kind a profile declares",
   "type": "object",
-  "required": ["id", "type"],
+  "required": ["bucket", "id", "type"],
   "properties": {
+    "bucket": { "$ref": "common.json#/$defs/id" },
     "id": { "$ref": "common.json#/$defs/id" },
     "class": { "enum": ["place", "actor", "subject"] },
     "type": { "$ref": "common.json#/$defs/type" },

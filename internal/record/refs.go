@@ -14,6 +14,8 @@ const (
 	TargetMemory    Target = "memory"
 	TargetAppraisal Target = "appraisal"
 	TargetRecord    Target = "record"
+	// TargetInput is what a memory can be made from: an event or a memory.
+	TargetInput Target = "input"
 )
 
 // Ref is one field that holds the id of another record.
@@ -103,6 +105,9 @@ func (m *Memory) Refs() []Ref {
 	for i := range m.Evidence {
 		r.add(fmt.Sprintf("evidence[%d].event", i), &m.Evidence[i].Event, TargetEvent)
 	}
+	for i := range m.DependsOn {
+		r.add(fmt.Sprintf("depends_on[%d].record", i), &m.DependsOn[i].Record, TargetInput)
+	}
 	r.judgements(m.Appraisals)
 	r.source(m.Source)
 	return r
@@ -150,6 +155,8 @@ func (t Target) Accepts(k Kind) bool {
 		return k.Record == "event"
 	case TargetMemory:
 		return k.Record == "memory"
+	case TargetInput:
+		return k.Record == "event" || k.Record == "memory"
 	case TargetAppraisal:
 		return k.Record == "appraisal"
 	}

@@ -3,8 +3,9 @@
   "$id": "https://schema.trailpad.ai/memory/0.1/appraisal.json",
   "title": "Appraisal",
   "type": "object",
-  "required": ["id", "target", "by"],
+  "required": ["bucket", "id", "target", "by"],
   "properties": {
+    "bucket": { "$ref": "common.json#/$defs/id" },
     "id": { "$ref": "common.json#/$defs/id" },
     "target": { "$ref": "common.json#/$defs/id" },
     "by": { "$ref": "common.json#/$defs/id" },

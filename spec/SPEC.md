@@ -58,6 +58,7 @@ Place, actor and subject are the three kinds of **entity** this spec names. They
 
 ```json
 {
+  "bucket": "bk_shop",
   "id": "ev_01J...",
   "type": "github.pull_request.review_comment",
   "occurred_at": "2026-04-19T14:02:11Z",
@@ -117,6 +118,7 @@ Places nest. Where something was said is a path, not a label.
 
 ```json
 {
+  "bucket": "bk_shop",
   "id": "pl_pr_4521_thread_3",
   "class": "place",
   "type": "github.pull_request.review_thread",
@@ -151,6 +153,7 @@ email > thread "Gateway limits"
 
 ```json
 {
+  "bucket": "bk_people",
   "id": "ac_ana",
   "class": "actor",
   "type": "person",
@@ -175,7 +178,7 @@ email > thread "Gateway limits"
 What events and memories are about.
 
 ```json
-{ "id": "sb_file_retry_go", "class": "subject", "type": "code.file", "name": "internal/retry/retry.go", "parent": "sb_repo_shop" }
+{ "bucket": "bk_shop", "id": "sb_file_retry_go", "class": "subject", "type": "code.file", "name": "internal/retry/retry.go", "parent": "sb_repo_shop" }
 ```
 
 Types are namespaced like places: `code.repository`, `code.file`, `code.symbol`, `ticket.issue`, `customer`, `product.feature`, `topic`. Subjects nest (`code.symbol` inside `code.file` inside `code.repository`) so recall can widen from a function to its file to its folder.
@@ -184,6 +187,7 @@ Types are namespaced like places: `code.repository`, `code.file`, `code.symbol`,
 
 ```json
 {
+  "bucket": "bk_shop",
   "id": "mm_retry_limit",
   "type": "constraint",
   "statement": "Retries to the payment gateway stop after three attempts.",
@@ -195,6 +199,7 @@ Types are namespaced like places: `code.repository`, `code.file`, `code.symbol`,
     { "event": "ev_01J...", "role": "established" },
     { "event": "ev_02K...", "role": "reinforced" }
   ],
+  "depends_on": [{ "record": "ev_meeting_0421" }],
   "subjects": [{ "subject": "sb_file_retry_go", "role": "about" }],
   "participants": [{ "actor": "ac_ana", "role": "decider" }],
   "appraisals": ["ap_..."],
@@ -222,6 +227,7 @@ A memory has two clocks, as in bi-temporal databases: `valid_from` / `valid_unti
 ```json
 {
   "system": "github",
+  "installation": "41290377",
   "native_id": "PRRC_kwDO...",
   "url": "https://github.com/...",
   "recorded_at": "2026-04-19T14:05:00Z",
@@ -240,6 +246,7 @@ How something landed is a judgement, not a property. Different people judge the 
 
 ```json
 {
+  "bucket": "bk_shop",
   "id": "ap_...",
   "target": "ev_01J...",
   "by": "ac_extractor_model",
@@ -270,7 +277,7 @@ A record's effective appraisal is a reduction of its appraisals (the latest from
 ## 10. Link
 
 ```json
-{ "id": "ln_7", "from": "mm_retry_limit_v2", "type": "supersedes", "to": "mm_retry_limit", "at": "2026-06-01T00:00:00Z", "source": { "...": "§9" } }
+{ "bucket": "bk_shop", "id": "ln_7", "from": "mm_retry_limit_v2", "type": "supersedes", "to": "mm_retry_limit", "at": "2026-06-01T00:00:00Z", "source": { "...": "§9" } }
 ```
 
 | Between | Types |
@@ -291,7 +298,7 @@ Events and memories in other fields carry things this spec does not name: a deal
 Place, actor and subject are kinds of one thing, an **entity**: something that exists apart from any one event and that events and memories can involve. Any new concept is a new entity type.
 
 ```json
-{ "id": "en_deal_884", "type": "crm.deal", "name": "Acme renewal 2027", "parent": "en_account_acme",
+{ "bucket": "bk_sales", "id": "en_deal_884", "type": "crm.deal", "name": "Acme renewal 2027", "parent": "en_account_acme",
   "attributes": { "crm.amount": { "value": 120000, "unit": "EUR" }, "crm.stage": "negotiation" }, "profiles": ["crm@1"] }
 ```
 
@@ -393,6 +400,7 @@ A recall request describes a situation, not only a string. The situation is the 
     "types": ["constraint", "decision"],
     "valence": { "max": -1 },
     "occurred": { "from": "2026-01-01", "to": "2026-07-01" },
+    "buckets": ["bk_shop"],
     "valid_at": "now",
     "places": { "under": "pl_slack_payments" },
     "attributes": { "crm.stage": ["negotiation"] }
@@ -406,6 +414,7 @@ A recall request describes a situation, not only a string. The situation is the 
 
 - `context`: what the caller is looking at. Every part is a cue.
 - `filters`: hard limits. A filtered-out record is never returned, whatever its score.
+- `buckets`: only records in these buckets. It narrows what the caller may read and never widens it (§12.6).
 - `valid_at`: only memories true at that time. Defaults to now; `null` includes retired memories.
 - `as_of`: answer as the store would have answered at that time (the recorded-time clock).
 - `expand`: also return the events behind each memory, and memories one link away.
@@ -518,6 +527,7 @@ A record the principal may not read does not exist for it:
 - Returned records keep only references the principal may read. A reference to anything else is removed, not replaced with a marker.
 - Errors never confirm that a hidden record exists. Writing a reference to a record the writer may not read fails exactly as a reference to nothing does.
 - Deduplication never answers with a record the writer may not read.
+- An id or source already used by a record the writer may not read is refused as taken, and the refusal says nothing else about that record.
 
 As-of questions (§12.1) choose which version of what was known; they never choose whose permissions apply. Permissions are always the current ones: someone who left yesterday cannot read last year's records by asking about last year.
 
@@ -526,7 +536,7 @@ As-of questions (§12.1) choose which version of what was known; they never choo
 What a memory says can reveal what it was made from, whatever it cites. A model that read a private thread and a public one can write a memory citing only the public one and still repeat the private one. So a memory's readers are decided by everything it was made from, and the engine does not take the writer's word for what that was.
 
 - **Extraction runs in a session.** A service with the `extract` action opens a session, reads through the engine within it, and writes memories within it. The engine records every record it served in the session, with its version, and every memory written in the session depends on all of them. The writer can add to `depends_on` (for what it read elsewhere); it cannot remove what the engine recorded.
-- **Inputs carry versions.** A dependency names a record and, for a memory, the version that was read: `{ "record": "mm_retry_limit", "version": 3 }`. Events never change, so they need none.
+- **Inputs carry versions.** A dependency names a record and, for a memory, the version that was read: `{ "record": "mm_retry_limit", "version": 3 }`. A memory named without a version means the version current when the new memory is written. Events never change, so they need none.
 - **Requirement sets are captured, not recomputed.** A memory version's requirement set is fixed when it is written, from the requirement sets of the input versions it read. A later, more restricted version of an input does not change memories made from the earlier one; a memory made from the later one inherits the restriction.
 - **New versions only add.** A new version of a memory keeps every requirement of the one before. Dropping a requirement would widen who may read it, which is publishing.
 - **Deleted buckets stay in requirement sets.** A bucket's id is never reused, and nobody may read a deleted bucket, so a memory made from one becomes unreadable rather than wider.

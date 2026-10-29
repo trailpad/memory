@@ -136,7 +136,14 @@ func serve(ctx context.Context, s *postgres.Store) error {
 		Connectors: s,
 		Log:        log,
 	}
-	srv := &http.Server{Addr: addr, Handler: api.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           api.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 	errs := make(chan error, 1)
 	go func() { errs <- srv.ListenAndServe() }()
 	log.Info("listening", "addr", addr)

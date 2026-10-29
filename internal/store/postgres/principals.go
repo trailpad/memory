@@ -53,6 +53,9 @@ func (s *Store) TokenTTL(ctx context.Context, workspace string) (time.Duration, 
 }
 
 func (s *Store) Person(ctx context.Context, workspace, issuer, sub string, accounts []access.Account) (string, error) {
+	if principal, err := s.knownPerson(ctx, workspace, issuer, sub, accounts); err != nil || principal != "" {
+		return principal, err
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return "", err
@@ -99,6 +102,31 @@ func (s *Store) Person(ctx context.Context, workspace, issuer, sub string, accou
 		return "", err
 	}
 	return principal, nil
+}
+
+// knownPerson is the principal of a subject seen before whose accounts are
+// all linked already, found without writing. It is empty when a sign-in has
+// something to record.
+func (s *Store) knownPerson(ctx context.Context, workspace, issuer, sub string, accounts []access.Account) (string, error) {
+	systems := make([]string, len(accounts))
+	installations := make([]string, len(accounts))
+	names := make([]string, len(accounts))
+	for i, acc := range accounts {
+		systems[i], installations[i], names[i] = acc.System, acc.Installation, acc.Account
+	}
+	var principal string
+	var unlinked int
+	err := s.pool.QueryRow(ctx, `
+		select s.principal_id,
+		       (select count(*) from unnest($4::text[], $5::text[], $6::text[]) as a(system, installation, account)
+		         where not exists (select 1 from account_links l where l.workspace_id = $1
+		           and l.system = a.system and l.installation = a.installation and l.account = a.account))
+		  from subjects s where s.workspace_id = $1 and s.issuer = $2 and s.sub = $3`,
+		workspace, issuer, sub, systems, installations, names).Scan(&principal, &unlinked)
+	if errors.Is(err, pgx.ErrNoRows) || unlinked > 0 {
+		return "", nil
+	}
+	return principal, err
 }
 
 func (s *Store) Grants(ctx context.Context, workspace, principal string, at time.Time) (read, write []string, err error) {

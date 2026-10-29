@@ -273,6 +273,59 @@ func TestAnAccountLinksToOnePerson(t *testing.T) {
 	e.must(404, "GET", "/v1/events/ev_retry", e.key, mallory, nil)
 }
 
+func TestARepeatSignInRecordsNothingNew(t *testing.T) {
+	e := newEngine(t)
+	shop := e.repository("repo_shop", "ev_retry", "Retries stop after three attempts.")
+	e.readers(shop, "gh_ana")
+	count := func() (log, principals int) {
+		t.Helper()
+		if err := e.store.Pool().QueryRow(context.Background(),
+			`select (select count(*) from access_log), (select count(*) from principals)`).Scan(&log, &principals); err != nil {
+			t.Fatal(err)
+		}
+		return log, principals
+	}
+	ana := e.sign(e.claims("user_ana", "gh_ana"))
+	e.must(200, "GET", "/v1/events/ev_retry", e.key, ana, nil)
+	log, principals := count()
+
+	// A lock that lets links be read but not written: a sign-in with nothing
+	// new to record must not wait on it.
+	ctx := context.Background()
+	lock, err := e.store.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lock.Exec(ctx, `lock table account_links in share mode`); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest("GET", e.server.URL+"/v1/events/ev_retry", nil)
+	req.Header.Set("Authorization", "Bearer "+e.key)
+	req.Header.Set(httpapi.PersonHeader, ana)
+	res, err := (&http.Client{Timeout: 3 * time.Second}).Do(req)
+	_ = lock.Rollback(ctx)
+	if err != nil {
+		t.Fatalf("a repeat sign-in waited to write: %v", err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("want 200, got %d", res.StatusCode)
+	}
+	if l, p := count(); l != log || p != principals {
+		t.Fatalf("signing in again changes nothing, got %d log rows and %d principals, want %d and %d", l, p, log, principals)
+	}
+
+	both := e.sign(e.claims("user_ana", "gh_ana", "gh_ana_2"))
+	e.must(200, "GET", "/v1/events/ev_retry", e.key, both, nil)
+	var links int
+	if err := e.store.Pool().QueryRow(context.Background(), `select count(*) from account_links`).Scan(&links); err != nil {
+		t.Fatal(err)
+	}
+	if links != 2 {
+		t.Fatalf("a newly proven account is still linked, got %d links", links)
+	}
+}
+
 func TestAnIssuerProvesOnlyTheSourcesItSignsPeopleInWith(t *testing.T) {
 	e := newEngine(t)
 	shop := e.repository("repo_shop", "ev_retry", "Retries stop after three attempts.")

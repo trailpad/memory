@@ -10,9 +10,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/trailpad/memory/internal/record"
+	"github.com/trailpad/memory/spec"
 )
 
 // Core is the profile every registry starts with.
@@ -62,7 +64,7 @@ type Attribute struct {
 
 type Dimension struct {
 	Dimension record.Type `json:"dimension"`
-	Scale     [2]int      `json:"scale"`
+	Scale     []int       `json:"scale"`
 }
 
 type LinkType struct {
@@ -92,8 +94,12 @@ func (p *Profile) Ref() string { return p.Name + "@" + p.Version }
 var profileName = regexp.MustCompile(`^[a-z0-9_]+$`)
 var profileVersion = regexp.MustCompile(`^[0-9]+$`)
 
-// Parse reads a profile and checks it follows the rules for profiles.
+// Parse reads a profile and checks it against the profile schema and the
+// rules for profiles.
 func Parse(data []byte) (*Profile, error) {
+	if err := spec.Validate("profile", data); err != nil {
+		return nil, fmt.Errorf("profile does not match the profile schema: %w", err)
+	}
 	var p Profile
 	if err := json.Unmarshal(data, &p); err != nil {
 		return nil, fmt.Errorf("profile is not valid JSON: %w", err)
@@ -151,6 +157,7 @@ func (p *Profile) check() error {
 			add(field+".key", "%q is not namespaced, like crm.amount", a.Key)
 			continue
 		}
+		owned(field+".key", a.Key)
 		if len(a.Schema) == 0 {
 			continue
 		}
@@ -165,8 +172,12 @@ func (p *Profile) check() error {
 		field := fmt.Sprintf("appraisals[%d]", i)
 		if !d.Dimension.Valid() || !d.Dimension.Namespaced() {
 			add(field+".dimension", "%q is not namespaced, like crm.risk", d.Dimension)
+		} else {
+			owned(field+".dimension", d.Dimension)
 		}
-		if d.Scale[0] >= d.Scale[1] {
+		if len(d.Scale) != 2 {
+			add(field+".scale", "is a low and a high end")
+		} else if d.Scale[0] >= d.Scale[1] {
 			add(field+".scale", "the low end must be below the high end")
 		}
 	}
@@ -189,9 +200,20 @@ func compile(name string, raw json.RawMessage) (*jsonschema.Schema, error) {
 	return c.Compile(url)
 }
 
-// Registry is every profile the store knows, by name and version.
+// Registry is every profile the store knows, by name and version. It is safe
+// for concurrent use. Profiles go in and come out as copies, so a published
+// version cannot be changed by whoever holds a pointer to it.
 type Registry struct {
+	mu       sync.RWMutex
 	profiles map[string]map[string]*Profile
+}
+
+func snapshot(p *Profile) (*Profile, error) {
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return nil, err
+	}
+	return Parse(raw)
 }
 
 // NewRegistry starts with the core profile.
@@ -214,7 +236,13 @@ func (r *Registry) put(p *Profile) {
 
 // Add registers a profile. A published version never changes, so adding a
 // different profile under an existing name and version is refused.
-func (r *Registry) Add(p *Profile) error {
+func (r *Registry) Add(given *Profile) error {
+	p, err := snapshot(given)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if p.Name == Core {
 		return fmt.Errorf("the core profile comes with the spec and cannot be replaced")
 	}
@@ -230,8 +258,10 @@ func (r *Registry) Add(p *Profile) error {
 	return nil
 }
 
-// Latest is the newest version of each registered profile.
-func (r *Registry) Latest() []*Profile {
+// latest is the newest version of each registered profile.
+func (r *Registry) latest() []*Profile {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	out := make([]*Profile, 0, len(r.profiles))
 	for _, versions := range r.profiles {
 		var best *Profile
@@ -246,8 +276,19 @@ func (r *Registry) Latest() []*Profile {
 	return out
 }
 
-// Get is one profile by its ref, "crm@1".
+// Get is a copy of one profile by its ref, "crm@1".
 func (r *Registry) Get(ref string) (*Profile, bool) {
+	p, ok := r.get(ref)
+	if !ok {
+		return nil, false
+	}
+	copied, err := snapshot(p)
+	return copied, err == nil
+}
+
+func (r *Registry) get(ref string) (*Profile, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	name, version, ok := strings.Cut(ref, "@")
 	if !ok {
 		return nil, false

@@ -10,6 +10,7 @@
     "type": { "$ref": "common.json#/$defs/type" },
     "to": { "$ref": "common.json#/$defs/id" },
     "at": { "$ref": "common.json#/$defs/instant" },
+    "profiles": { "$ref": "common.json#/$defs/profiles" },
     "source": { "$ref": "common.json#/$defs/source" }
   }
 }

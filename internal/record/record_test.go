@@ -63,3 +63,50 @@ func TestUnjudgedIsNotNeutral(t *testing.T) {
 		t.Fatalf("an unjudged valence is written back as %v", back["valence"])
 	}
 }
+
+func TestTimesThatCannotBeRead(t *testing.T) {
+	for _, raw := range []string{
+		`"2026-04-21T09:00:00"`,
+		`"yesterday"`,
+		`{"at":"2026-04-21T09:00:00Z","precision":"week"}`,
+		`{"at":"21 April","precision":"day"}`,
+		`42`,
+	} {
+		var at record.Instant
+		if err := json.Unmarshal([]byte(raw), &at); err == nil {
+			t.Errorf("%s was read as %v", raw, at.At)
+		}
+	}
+}
+
+func TestEachPrecisionSpansItsUnit(t *testing.T) {
+	start := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	cases := map[record.Precision]time.Time{
+		record.Second: start,
+		record.Minute: start.Add(time.Minute),
+		record.Day:    start.AddDate(0, 0, 1),
+		record.Month:  start.AddDate(0, 1, 0),
+		record.Year:   start.AddDate(1, 0, 0),
+	}
+	for precision, want := range cases {
+		if got := (record.Instant{At: start, Precision: precision}).Until(); !got.Equal(want) {
+			t.Errorf("%s: until %v, want %v", precision, got, want)
+		}
+	}
+}
+
+func TestEveryProblemIsReportedAtOnce(t *testing.T) {
+	bad := record.Memory{Type: "Constraint", Confidence: ptr(2.0),
+		Evidence: []record.Evidence{{Role: "maybe"}}}
+	fields := map[string]bool{}
+	for _, p := range bad.Validate() {
+		fields[p.Field] = true
+	}
+	for _, want := range []string{"id", "type", "statement", "confidence", "evidence[0].event", "evidence[0].role"} {
+		if !fields[want] {
+			t.Errorf("no problem reported on %s; got %v", want, fields)
+		}
+	}
+}
+
+func ptr[T any](v T) *T { return &v }

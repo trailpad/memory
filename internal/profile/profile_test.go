@@ -3,6 +3,7 @@ package profile_test
 import (
 	"encoding/json"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -134,4 +135,60 @@ func TestCoreCannotBeReplaced(t *testing.T) {
 	if err := profile.NewRegistry().Add(p); err == nil {
 		t.Fatal("core comes with the spec")
 	}
+}
+
+func TestProfilesThatCannotBeLoaded(t *testing.T) {
+	cases := map[string]string{
+		"name with capitals":      `{"profile":"CRM","version":"1"}`,
+		"version that is a word":  `{"profile":"crm","version":"one"}`,
+		"weight above one":        `{"profile":"crm","version":"1","roles":[{"role":"crm.buyer","cue_weight":2}]}`,
+		"negative half life":      `{"profile":"crm","version":"1","memory_types":[{"type":"crm.note","half_life_days":-1}]}`,
+		"upside down scale":       `{"profile":"crm","version":"1","appraisals":[{"dimension":"crm.risk","scale":[5,1]}]}`,
+		"attribute schema broken": `{"profile":"crm","version":"1","attributes":[{"key":"crm.stage","schema":{"type":"colour"}}]}`,
+		"not json":                `{"profile":`,
+	}
+	for name, raw := range cases {
+		if _, err := profile.Parse([]byte(raw)); err == nil {
+			t.Errorf("%s: loaded", name)
+		}
+	}
+}
+
+func TestAPublishedProfileCannotBeChangedThroughAPointer(t *testing.T) {
+	r := crm(t)
+	before := r.Resolver().CueWeight("crm.buyer")
+	held, ok := r.Get("crm@1")
+	if !ok {
+		t.Fatal("crm@1 is registered")
+	}
+	held.Roles[0].CueWeight = 0.01
+	if got := r.Resolver().CueWeight("crm.buyer"); got != before {
+		t.Fatalf("editing a copy changed the registry: %v", got)
+	}
+}
+
+func TestTheRegistryServesWhileProfilesArrive(t *testing.T) {
+	r := crm(t)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for v := 2; v < 50; v++ {
+			p, err := profile.Parse([]byte(`{"profile":"crm","version":"` + strconv.Itoa(v) + `"}`))
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if err := r.Add(p); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}()
+	for i := 0; i < 200; i++ {
+		_ = r.Resolver().CueWeight("decider")
+		if _, err := r.For([]string{"crm@1"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	<-done
 }

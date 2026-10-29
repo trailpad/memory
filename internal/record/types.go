@@ -55,6 +55,7 @@ type Entity struct {
 	Identities []Identity `json:"identities,omitempty"`
 	MemberOf   []string   `json:"member_of,omitempty"`
 	Attributes Attributes `json:"attributes,omitempty"`
+	Profiles   []string   `json:"profiles,omitempty"`
 	Source     *Source    `json:"source,omitempty"`
 }
 
@@ -151,15 +152,17 @@ type Appraisal struct {
 	Dimensions map[Type]int `json:"dimensions,omitempty"`
 	Confidence *float64     `json:"confidence,omitempty"`
 	Method     string       `json:"method,omitempty"`
+	Profiles   []string     `json:"profiles,omitempty"`
 	Source     *Source      `json:"source,omitempty"`
 }
 
 // Link is a typed relation between two records.
 type Link struct {
-	ID     string   `json:"id"`
-	From   string   `json:"from"`
-	Type   Type     `json:"type"`
-	To     string   `json:"to"`
-	At     *Instant `json:"at,omitempty"`
-	Source *Source  `json:"source,omitempty"`
+	ID       string   `json:"id"`
+	From     string   `json:"from"`
+	Type     Type     `json:"type"`
+	To       string   `json:"to"`
+	At       *Instant `json:"at,omitempty"`
+	Profiles []string `json:"profiles,omitempty"`
+	Source   *Source  `json:"source,omitempty"`
 }

@@ -169,6 +169,18 @@ func (e Entity) Validate() Problems {
 	if e.Parent != "" && e.Parent == e.ID {
 		c.add("parent", "an entity cannot be its own parent")
 	}
+	if e.Medium != nil {
+		switch e.Medium.Formality {
+		case "", "casual", "work", "formal", "binding":
+		default:
+			c.add("medium.formality", "%q is not casual, work, formal or binding", e.Medium.Formality)
+		}
+		switch e.Medium.Record {
+		case "", "written", "transcribed", "recalled":
+		default:
+			c.add("medium.record", "%q is not written, transcribed or recalled", e.Medium.Record)
+		}
+	}
 	for i, id := range e.Identities {
 		at := fmt.Sprintf("identities[%d]", i)
 		c.id(at+".platform", id.Platform)

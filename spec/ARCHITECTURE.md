@@ -188,14 +188,15 @@ Tables (one per record kind) plus the joins that make cues queryable:
 
 | Table | Holds | Indexes |
 |---|---|---|
+| `record_ids` | every id, with its record kind and entity class | `id` primary key |
 | `events` | events, append only | `occurred_at`, `place_id`, `part_of`, full text on content |
 | `memories` | memories, one row per version | `valid_from`, `valid_until`, `recorded_at`, full text, vector |
 | `entities` | places, actors, subjects and every declared kind, one table | `parent_id`, `type` |
-| `involvements` | record, entity, role (places, participants, subjects and `involves` alike) | `(entity_id, role)`, `(record_id)` |
+| `involvements` | record, version, entity, role (places, participants, subjects and `involves` alike) | `(entity_id, role)`, `(record_id)` |
 | `profiles` | declared vocabularies, versioned | `(name, version)` |
-| `evidence` | memory, event, role | `(event_id)`, `(memory_id)` |
-| `appraisals` | judgements | `(target_id, at)` |
-| `links` | typed relations | `(from_id, type)`, `(to_id, type)` |
+| `evidence` | memory, version, event, role | `(event_id)`, `(memory_id)` |
+| `appraisals` | judgements | `(target_id, at)`, source unique |
+| `links` | typed relations | `(from_id, type)`, `(to_id, type)`, source unique |
 | `cue_counts` | how many records each cue touches | refreshed by `maintain/graph.go`, used for rarity |
 | `identities` | platform handles to actors | `(platform, handle)` unique |
 
@@ -203,18 +204,25 @@ Attributes are a JSONB column on records and entities. When a profile marks an a
 
 Nesting (place inside place, subject inside subject) is stored as a parent column and queried with recursive CTEs. If those get slow, a materialised path column replaces them.
 
-Both clocks are columns on `memories`: `valid_from` / `valid_until` for the world, `recorded_at` / `superseded_at` for the store. `as_of` recall filters on the second pair.
+An id names exactly one record. `record_ids` enforces it across tables, so a reference never needs to say which table it points into, and capture can check that each reference points at the kind its field asks for (a `by` at an actor, a `place` at a place).
+
+Both clocks are columns on `memories`: `valid_from` / `valid_until` for the world, `recorded_at` / `superseded_at` for the store. `as_of` recall filters on the second pair. A memory's involvements and evidence are kept per version, so an earlier version keeps the people and events it was tied to.
 
 ## 5. Write path
 
 ```
  client ─► api ─► capture.ingest
-                    ├── validate (record)
-                    ├── resolve references (places, actors, subjects; create if new)
-                    ├── dedupe on source system + native id
-                    ├── store.Put in one transaction
-                    └── queue: embed, cue counts
+                    ├── validate (record, profile attributes and dimensions)
+                    ├── check references (present, and of the right kind)
+                    └── store.Write, one transaction
+                          ├── lock every id and source the batch touches
+                          ├── dedupe on source system + native id
+                          ├── rewrite references to the stored ids
+                          ├── write
+                          └── queue: embed, cue counts
 ```
+
+Locks are taken in sorted order, so two batches touching the same records wait for each other rather than deadlocking or racing to insert the same source twice. Deduplication finishes before any reference is rewritten, so the result does not depend on the order of records in a batch.
 
 Writes return once the transaction commits. Embedding and cue counts follow shortly after, and recall works without them (the lexical and cue sources still answer).
 

@@ -20,6 +20,7 @@
     },
     "confidence": { "$ref": "common.json#/$defs/unit" },
     "method": { "type": "string" },
+    "profiles": { "$ref": "common.json#/$defs/profiles" },
     "source": { "$ref": "common.json#/$defs/source" }
   },
   "anyOf": [

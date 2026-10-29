@@ -9,41 +9,21 @@ import (
 	"testing"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/trailpad/memory/internal/profile"
 	"github.com/trailpad/memory/internal/record"
+	"github.com/trailpad/memory/spec"
 )
 
-const schemaBase = "https://schema.trailpad.ai/memory/0.1/"
-
-// schemas compiles every schema in spec/schema, resolving their references to
-// each other locally.
+// schemas are the published schemas, as the spec package embeds them.
 func schemas(t *testing.T) map[string]*jsonschema.Schema {
 	t.Helper()
-	c := jsonschema.NewCompiler()
-	c.AssertFormat()
-	files, _ := filepath.Glob("../../spec/schema/*.json")
-	if len(files) == 0 {
-		t.Fatal("no schemas found")
-	}
-	for _, f := range files {
-		raw, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
-		if err != nil {
-			t.Fatalf("%s: %v", f, err)
-		}
-		if err := c.AddResource(schemaBase+filepath.Base(f), doc); err != nil {
-			t.Fatal(err)
-		}
-	}
 	out := map[string]*jsonschema.Schema{}
-	for _, f := range files {
-		s, err := c.Compile(schemaBase + filepath.Base(f))
+	for _, kind := range []string{"event", "memory", "entity", "appraisal", "link", "profile"} {
+		s, err := spec.Schema(kind)
 		if err != nil {
-			t.Fatalf("%s: %v", f, err)
+			t.Fatal(err)
 		}
-		out[strings.TrimSuffix(filepath.Base(f), ".json")] = s
+		out[kind] = s
 	}
 	return out
 }
@@ -123,12 +103,15 @@ func TestSpecExamplesPassSchemaAndGo(t *testing.T) {
 			if err := schema.Validate(instance(t, raw)); err != nil {
 				t.Fatalf("schema refuses the spec's own example: %v", err)
 			}
+			if kind == "profile" {
+				if _, err := profile.Parse(raw); err != nil {
+					t.Fatalf("Go refuses the spec's own example: %v", err)
+				}
+				return
+			}
 			rec, err := decode(kind, raw)
 			if err != nil {
 				t.Fatalf("Go refuses the spec's own example: %v", err)
-			}
-			if rec == nil {
-				return
 			}
 			if problems := rec.Validate(); len(problems) > 0 {
 				t.Fatalf("Go validation refuses the spec's own example: %v", problems)
@@ -188,6 +171,27 @@ func TestSchemaAndGoRefuseTheSameRecords(t *testing.T) {
 			m["occurred_at"] = map[string]any{"at": "2026-04-21T09:00:00Z", "precision": "week"}
 		}},
 		{"time without offset", "event.meeting.json", func(m map[string]any) { m["occurred_at"] = "2026-04-21T09:00:00" }},
+		{"unknown formality", "entity.place.json", func(m map[string]any) {
+			m["medium"] = map[string]any{"formality": "invalid"}
+		}},
+		{"unknown record medium", "entity.place.json", func(m map[string]any) {
+			m["medium"] = map[string]any{"record": "invalid"}
+		}},
+		{"role without weight", "profile.crm.json", func(m map[string]any) {
+			m["roles"] = []any{map[string]any{"role": "crm.buyer"}}
+		}},
+		{"link type without ends", "profile.crm.json", func(m map[string]any) {
+			m["links"] = []any{map[string]any{"type": "crm.blocks"}}
+		}},
+		{"entity type of unknown class", "profile.crm.json", func(m map[string]any) {
+			m["entity_types"] = []any{map[string]any{"type": "crm.deal", "class": "invalid"}}
+		}},
+		{"scale with three ends", "profile.crm.json", func(m map[string]any) {
+			m["appraisals"] = []any{map[string]any{"dimension": "crm.risk", "scale": []any{1, 5, 99}}}
+		}},
+		{"attribute from another profile", "profile.crm.json", func(m map[string]any) {
+			m["attributes"] = []any{map[string]any{"key": "care.dose", "schema": false}}
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -203,6 +207,14 @@ func TestSchemaAndGoRefuseTheSameRecords(t *testing.T) {
 			broken, _ := json.Marshal(m)
 			kind := kindOf(c.file)
 
+			if kind == "profile" {
+				// A profile from another namespace is valid JSON; owning names
+				// is a rule only Go can check.
+				if _, err := profile.Parse(broken); err == nil {
+					t.Error("Go accepts it")
+				}
+				return
+			}
 			if err := compiled[kind].Validate(instance(t, broken)); err == nil {
 				t.Error("schema accepts it")
 			}

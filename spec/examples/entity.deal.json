@@ -3,5 +3,14 @@
   "type": "crm.deal",
   "name": "Acme renewal 2027",
   "parent": "en_account_acme",
-  "attributes": { "crm.amount": { "value": 120000, "unit": "EUR" }, "crm.stage": "negotiation" }
+  "attributes": {
+    "crm.amount": {
+      "value": 120000,
+      "unit": "EUR"
+    },
+    "crm.stage": "negotiation"
+  },
+  "profiles": [
+    "crm@1"
+  ]
 }

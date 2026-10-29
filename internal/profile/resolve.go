@@ -22,15 +22,15 @@ type Resolver struct {
 }
 
 // Resolver over the newest version of every profile.
-func (r *Registry) Resolver() *Resolver { return &Resolver{profiles: r.Latest()} }
+func (r *Registry) Resolver() *Resolver { return &Resolver{profiles: r.latest()} }
 
 // For is a resolver over the profiles a record names, plus core. A name the
 // registry does not know is reported, not ignored.
 func (r *Registry) For(refs []string) (*Resolver, error) {
-	core, _ := r.Get(Core + "@1")
+	core, _ := r.get(Core + "@1")
 	chosen := []*Profile{core}
 	for _, ref := range refs {
-		p, ok := r.Get(ref)
+		p, ok := r.get(ref)
 		if !ok {
 			return nil, fmt.Errorf("profile %s is not registered", ref)
 		}
@@ -218,7 +218,7 @@ func (r *Resolver) schemaFor(key record.Type) *jsonschema.Schema {
 	return nil
 }
 
-func (r *Resolver) scaleFor(key record.Type) ([2]int, bool) {
+func (r *Resolver) scaleFor(key record.Type) ([]int, bool) {
 	for _, p := range r.profiles {
 		for _, d := range p.Appraisals {
 			if d.Dimension == key {
@@ -226,7 +226,7 @@ func (r *Resolver) scaleFor(key record.Type) ([2]int, bool) {
 			}
 		}
 	}
-	return [2]int{}, false
+	return nil, false
 }
 
 // firstLine is the most specific reason a value failed its schema: the

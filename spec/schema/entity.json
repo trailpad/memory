@@ -37,6 +37,7 @@
     },
     "member_of": { "$ref": "common.json#/$defs/ids" },
     "attributes": { "$ref": "common.json#/$defs/attributes" },
+    "profiles": { "$ref": "common.json#/$defs/profiles" },
     "source": { "$ref": "common.json#/$defs/source" }
   },
   "if": { "not": { "required": ["class"] } },

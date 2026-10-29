@@ -246,7 +246,8 @@ How something landed is a judgement, not a property. Different people judge the 
   "surprise": 3,
   "dimensions": { "crm.risk": 4 },
   "confidence": 0.7,
-  "method": "model"
+  "method": "model",
+  "profiles": ["crm@1"]
 }
 ```
 
@@ -287,7 +288,7 @@ Place, actor and subject are kinds of one thing, an **entity**: something that e
 
 ```json
 { "id": "en_deal_884", "type": "crm.deal", "name": "Acme renewal 2027", "parent": "en_account_acme",
-  "attributes": { "crm.amount": { "value": 120000, "unit": "EUR" }, "crm.stage": "negotiation" } }
+  "attributes": { "crm.amount": { "value": 120000, "unit": "EUR" }, "crm.stage": "negotiation" }, "profiles": ["crm@1"] }
 ```
 
 An entity has an `id`, a namespaced `type`, a `name`, an optional `class` (§3), an optional `parent` (any entity, so concepts nest), optional `attributes` (§11.3) and a `source`. The fields §5 and §6 give places and actors are optional on any entity.

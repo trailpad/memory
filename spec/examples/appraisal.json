@@ -7,7 +7,12 @@
   "intensity": 4,
   "importance": 5,
   "surprise": 3,
-  "dimensions": { "crm.risk": 4 },
+  "dimensions": {
+    "crm.risk": 4
+  },
   "confidence": 0.7,
-  "method": "model"
+  "method": "model",
+  "profiles": [
+    "crm@1"
+  ]
 }

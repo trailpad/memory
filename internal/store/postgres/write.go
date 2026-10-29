@@ -77,13 +77,15 @@ func (s *Store) write(ctx context.Context, given store.Batch) (store.Written, er
 			return out, fmt.Errorf("entity %s: %w", e.ID, err)
 		}
 	}
-	for _, e := range b.Events {
-		if err := w.event(ctx, e); err != nil {
+	for i, e := range b.Events {
+		lineage, refresh := store.TypeLineage(given.Lineage.Events, i, e.Type)
+		if err := w.event(ctx, e, lineage, refresh); err != nil {
 			return out, fmt.Errorf("event %s: %w", e.ID, err)
 		}
 	}
-	for _, m := range b.Memories {
-		if err := w.memory(ctx, m); err != nil {
+	for i, m := range b.Memories {
+		lineage, refresh := store.TypeLineage(given.Lineage.Memories, i, m.Type)
+		if err := w.memory(ctx, m, lineage, refresh); err != nil {
 			return out, fmt.Errorf("memory %s: %w", m.ID, err)
 		}
 	}
@@ -333,6 +335,14 @@ func source(src *record.Source) (system, native *string) {
 	return &src.System, &src.NativeID
 }
 
+func types(ts []record.Type) []string {
+	out := make([]string, len(ts))
+	for i, t := range ts {
+		out[i] = string(t)
+	}
+	return out
+}
+
 func at(i *record.Instant) *time.Time {
 	if i == nil {
 		return nil
@@ -439,7 +449,16 @@ func (w *writer) involve(ctx context.Context, kind, recordID string, version int
 	return nil
 }
 
-func (w *writer) event(ctx context.Context, e record.Event) error {
+// A record captured again unchanged still takes the lineage capture worked
+// out, when there is one: it is derived from the record's profiles, not part
+// of the record, and rows stored before lineage was kept need repairing.
+func (w *writer) relineage(ctx context.Context, table, id string, lineage []record.Type) error {
+	_, err := w.tx.Exec(ctx, `update `+table+` set type_lineage = $2 where id = $1 and type_lineage is distinct from $2`+
+		map[string]string{"memories": ` and superseded_at is null`, "events": ``}[table], id, types(lineage))
+	return err
+}
+
+func (w *writer) event(ctx context.Context, e record.Event, lineage []record.Type, refresh bool) error {
 	if err := w.claim(ctx, e.ID, "event", ""); err != nil {
 		return err
 	}
@@ -456,6 +475,9 @@ func (w *writer) event(ctx context.Context, e record.Event) error {
 			return store.ErrChanged
 		}
 		w.unchanged(e.ID)
+		if refresh {
+			return w.relineage(ctx, "events", e.ID, lineage)
+		}
 		return nil
 	}
 	texts := make([]string, 0, len(e.Content))
@@ -470,17 +492,17 @@ func (w *writer) event(ctx context.Context, e record.Event) error {
 	system, native := source(e.Source)
 	_, err = w.tx.Exec(ctx, `
 		insert into events (id, type, occurred_at, occurred_precision, ended_at, place_id, part_of, in_reply_to, body, said,
-			source_system, source_native_id, recorded_at)
-		values ($1, $2, $3, $4, $5, nullif($6, ''), nullif($7, ''), nullif($8, ''), $9, to_tsvector('english', $10), $11, $12, $13)`,
+			source_system, source_native_id, recorded_at, type_lineage)
+		values ($1, $2, $3, $4, $5, nullif($6, ''), nullif($7, ''), nullif($8, ''), $9, to_tsvector('english', $10), $11, $12, $13, $14)`,
 		e.ID, string(e.Type), at(e.OccurredAt), precision, at(e.EndedAt), e.Place, e.PartOf, e.InReplyTo, body,
-		strings.Join(texts, "\n"), system, native, w.now)
+		strings.Join(texts, "\n"), system, native, w.now, types(lineage))
 	if err != nil {
 		return err
 	}
 	return w.involve(ctx, "event", e.ID, 0, e.Place, e.Participants, e.Subjects, e.Involves)
 }
 
-func (w *writer) memory(ctx context.Context, m record.Memory) error {
+func (w *writer) memory(ctx context.Context, m record.Memory, lineage []record.Type, refresh bool) error {
 	if err := w.claim(ctx, m.ID, "memory", ""); err != nil {
 		return err
 	}
@@ -497,6 +519,9 @@ func (w *writer) memory(ctx context.Context, m record.Memory) error {
 	switch {
 	case err == nil && same:
 		w.unchanged(m.ID)
+		if refresh {
+			return w.relineage(ctx, "memories", m.ID, lineage)
+		}
 		return nil
 	case err == nil:
 		if _, err := w.tx.Exec(ctx, `update memories set superseded_at = $2 where id = $1 and superseded_at is null`, m.ID, w.now); err != nil {
@@ -510,12 +535,9 @@ func (w *writer) memory(ctx context.Context, m record.Memory) error {
 	system, native := source(m.Source)
 	_, err = w.tx.Exec(ctx, `
 		insert into memories (id, version, type, statement, why, valid_from, valid_until, confidence, body, said,
-			recall_count, last_recalled_at, source_system, source_native_id, recorded_at)
-		select $1, $2, $3, $4, nullif($5, ''), $6, $7, $8, $9, to_tsvector('english', $4 || ' ' || $5),
-			coalesce(prev.recall_count, 0), prev.last_recalled_at, $10, $11, $12
-		from (select 1) one
-		left join memories prev on prev.id = $1 and prev.version = $2 - 1`,
-		m.ID, next, string(m.Type), m.Statement, m.Why, at(m.ValidFrom), at(m.ValidUntil), m.Confidence, body, system, native, w.now)
+			source_system, source_native_id, recorded_at, type_lineage)
+		values ($1, $2, $3, $4, nullif($5, ''), $6, $7, $8, $9, to_tsvector('english', $4 || ' ' || $5), $10, $11, $12, $13)`,
+		m.ID, next, string(m.Type), m.Statement, m.Why, at(m.ValidFrom), at(m.ValidUntil), m.Confidence, body, system, native, w.now, types(lineage))
 	if err != nil {
 		return err
 	}

@@ -103,7 +103,7 @@ memory/
 │   │   ├── explain.go           the "because" block on each result
 │   │   ├── rehearse.go          write back recall count when a result is used
 │   │   └── signals/
-│   │       ├── relevance.go     lexical and semantic, fused by rank
+│   │       ├── relevance.go     lexical and semantic, each scaled to its best match
 │   │       ├── cue.go           shared entities, weighted by rarity and role
 │   │       ├── recency.go       decay per memory type, rehearsal
 │   │       ├── importance.go

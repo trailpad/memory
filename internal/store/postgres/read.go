@@ -34,33 +34,15 @@ func (s *Store) Event(ctx context.Context, id string) (record.Event, error) {
 }
 
 func (s *Store) Memory(ctx context.Context, id string, asOf *time.Time) (record.Memory, error) {
-	var m record.Memory
-	var raw []byte
-	var count int
-	var last *time.Time
-	query := `select body, recall_count, last_recalled_at from memories where id = $1 and superseded_at is null`
-	args := []any{id}
-	if asOf != nil {
-		query = `select body, recall_count, last_recalled_at from memories
-			where id = $1 and recorded_at <= $2 and (superseded_at is null or superseded_at > $2)`
-		args = append(args, *asOf)
-	}
-	err := s.pool.QueryRow(ctx, query, args...).Scan(&raw, &count, &last)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return m, store.ErrNotFound
-	}
+	scope := store.Scope{AsOf: asOf, Kinds: []string{store.MemoryKind}}
+	found, err := s.Records(ctx, scope, []store.Ref{{Kind: store.MemoryKind, ID: id}})
 	if err != nil {
-		return m, err
+		return record.Memory{}, err
 	}
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return m, err
+	if len(found) == 0 {
+		return record.Memory{}, store.ErrNotFound
 	}
-	m.Recall = &record.Rehearsal{Count: count}
-	if last != nil {
-		at := record.Exact(*last)
-		m.Recall.LastAt = &at
-	}
-	return m, nil
+	return *found[0].Memory, nil
 }
 
 func (s *Store) Kinds(ctx context.Context, ids []string) (map[string]record.Kind, error) {

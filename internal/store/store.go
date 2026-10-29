@@ -27,6 +27,26 @@ type Batch struct {
 	Memories   []record.Memory    `json:"memories,omitempty"`
 	Appraisals []record.Appraisal `json:"appraisals,omitempty"`
 	Links      []record.Link      `json:"links,omitempty"`
+	// Lineage is each event's and memory's type followed by every type it
+	// falls back to, read with the profiles the record names, by position in
+	// the batch. Profile versions never change, so it is worked out once at
+	// capture. Missing, the store uses the type's namespace parents.
+	Lineage Lineage `json:"-"`
+}
+
+// Lineage holds type chains by position: Events[i] is for Batch.Events[i].
+type Lineage struct {
+	Events   [][]record.Type
+	Memories [][]record.Type
+}
+
+// TypeLineage is the chain recorded for position i, or the type's namespace
+// parents when none was given. Given reports which.
+func TypeLineage(chains [][]record.Type, i int, t record.Type) (lineage []record.Type, given bool) {
+	if i < len(chains) && len(chains[i]) > 0 {
+		return chains[i], true
+	}
+	return t.Lineage(), false
 }
 
 // Written says what a batch did to each record.

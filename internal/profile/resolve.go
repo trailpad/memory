@@ -12,6 +12,10 @@ import (
 // weight: unknown roles still work as cues, just not strong ones.
 const PlainCueWeight = 0.5
 
+// MaxCueWeight is the most any role counts for; profiles weigh roles from 0
+// to it.
+const MaxCueWeight = 1.0
+
 // DefaultHalfLifeDays is how fast a memory of an undeclared type fades.
 const DefaultHalfLifeDays = 365
 
@@ -234,4 +238,40 @@ func (r *Resolver) scaleFor(key record.Type) ([]int, bool) {
 func firstLine(err error) string {
 	lines := strings.Split(strings.TrimSpace(err.Error()), "\n")
 	return strings.TrimLeft(strings.TrimSpace(lines[len(lines)-1]), "- ")
+}
+
+// MemoryLineage is a memory type followed by every type it falls back to:
+// declared fallbacks, which may cross into another profile, and namespace
+// parents.
+func (r *Resolver) MemoryLineage(t record.Type) []record.Type {
+	return lineage(t, func(t record.Type) record.Type {
+		m, _ := r.memoryType(t)
+		return m.FallsBackTo
+	})
+}
+
+// EventLineage is the same for an event type.
+func (r *Resolver) EventLineage(t record.Type) []record.Type {
+	return lineage(t, func(t record.Type) record.Type {
+		e, _ := r.eventType(t)
+		return e.FallsBackTo
+	})
+}
+
+func lineage(t record.Type, fallsBackTo func(record.Type) record.Type) []record.Type {
+	var out []record.Type
+	seen := map[record.Type]bool{}
+	var walk func(record.Type)
+	walk = func(t record.Type) {
+		for t != "" && !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+			if to := fallsBackTo(t); to != "" {
+				walk(to)
+			}
+			t = parent(t)
+		}
+	}
+	walk(t)
+	return out
 }

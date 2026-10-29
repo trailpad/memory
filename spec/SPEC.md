@@ -412,7 +412,7 @@ Each candidate gets a score from separate signals. Each signal is returned on it
 
 | Signal | Meaning |
 |---|---|
-| `relevance` | Text match between the context text and the record: lexical and semantic, fused by rank (reciprocal rank fusion), so neither an exact identifier nor a paraphrase is missed. |
+| `relevance` | Text match between the context text and the record, from lexical and semantic matching. Each is scaled so its best match scores 1, and a record keeps its stronger showing, so neither an exact identifier nor a paraphrase is missed. |
 | `cue` | Overlap between the context's cues and the record's cues (every involved entity: places, participants, subjects and any declared kind, at every level of nesting). Each shared cue counts by how rare it is: a file touched by two memories is a strong cue, a person on every event is almost none. Roles scale it: a shared decider counts more than a shared mention. |
 | `recency` | How recently it happened, decaying with a half-life per memory type (a convention fades slower than a workaround). Each recall resets part of the decay, as rehearsal does. |
 | `importance` | From the effective appraisal. |
@@ -420,7 +420,7 @@ Each candidate gets a score from separate signals. Each signal is returned on it
 | `authority` | From the place's formality and the participants' roles: a binding decision in a design review outranks a passing remark in a DM. |
 | `validity` | Down-weights memories contradicted but not yet retired, so the caller can see the conflict instead of a silent pick. |
 
-Default combination: weighted sum after normalising each signal to 0..1. The weights are part of the request (`weights`) and have defaults per use, such as `review`, `planning` and `incident`.
+Default combination: weighted sum after normalising each signal to 0..1. `cue` is the share of the context's own cues a record shares: sharing every one in the strongest role scores 1, so a thin match reads as thin even when nothing better exists. The weights are part of the request (`weights`) and have defaults per use, such as `review`, `planning` and `incident`.
 
 ### 12.3 Spreading from the cues
 

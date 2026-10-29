@@ -61,9 +61,12 @@ func (c *Capture) Ingest(ctx context.Context, b store.Batch) (store.Written, err
 		e := &b.Events[i]
 		at := fmt.Sprintf("events[%d]", i)
 		add(at, e.Validate())
+		lineage := e.Type.Lineage()
 		if r := resolver(at, e.Profiles); r != nil {
 			add(at, r.CheckAttributes("attributes", e.Attributes))
+			lineage = r.EventLineage(e.Type)
 		}
+		b.Lineage.Events = append(b.Lineage.Events, lineage)
 		define(at, e.ID, record.Kind{Record: "event"})
 		holders = append(holders, holder{at, e.Refs()})
 	}
@@ -71,9 +74,12 @@ func (c *Capture) Ingest(ctx context.Context, b store.Batch) (store.Written, err
 		m := &b.Memories[i]
 		at := fmt.Sprintf("memories[%d]", i)
 		add(at, m.Validate())
+		lineage := m.Type.Lineage()
 		if r := resolver(at, m.Profiles); r != nil {
 			add(at, r.CheckAttributes("attributes", m.Attributes))
+			lineage = r.MemoryLineage(m.Type)
 		}
+		b.Lineage.Memories = append(b.Lineage.Memories, lineage)
 		define(at, m.ID, record.Kind{Record: "memory"})
 		holders = append(holders, holder{at, m.Refs()})
 	}

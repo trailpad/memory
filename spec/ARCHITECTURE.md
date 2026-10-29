@@ -111,8 +111,11 @@ memory/
 │   │       ├── authority.go     place formality and participants' roles
 │   │       └── validity.go      contradicted but not retired
 │   │
-│   ├── access/
-│   │   └── audience.go          who may see what, as SQL predicates
+│   ├── access/                  SPEC §13
+│   │   ├── principal.go         principals, groups, account links
+│   │   ├── grant.go             grants by origin, settings, open mode
+│   │   ├── token.go             service credentials, issuer tokens, delegation
+│   │   └── snapshot.go          what a principal may read, fixed per request
 │   │
 │   ├── embed/
 │   │   └── embed.go             Embedder interface; providers are adapters,
@@ -253,13 +256,24 @@ The application keeps its own model and screens. The memory service is where its
 
 ## 8. Order of work
 
+Done:
+
 1. `record`, `profile` (with the core profile) and `spec/schema`: types and JSON Schema agree on the spec's examples; validation.
 2. `store/postgres` with migrations; `capture` without embeddings.
 3. `recall` with lexical and cue sources only, `explain` from day one.
-4. `conformance` fixtures and the first four questions.
-5. `embed` and the semantic source.
-6. `spread` (personalised PageRank).
-7. `maintain`, `access` hardened, the remaining questions.
-8. Clients.
 
-Each step ships something that answers questions, so recall quality can be measured from step 3 on.
+Next. Access (SPEC §13) comes before anything serves real data, because a service with no access rule has nothing safe to serve:
+
+4. Storage boundary: workspace and bucket on every table; ids, source dedupe, identities and locks scoped to the workspace; a requirement set stored with every record and memory version; an authorization context every store method requires, kept apart from search filters, failing closed when absent.
+5. `access`: service credentials, trusted issuers and token checks, principals, roles, groups, grants by origin, delegations, account links, extraction sessions, the settings in SPEC §13.9.
+6. Capture and direct reads under the read rule (SPEC §13.3): dedupe, reference checks and errors reveal nothing hidden.
+7. Recall under the read rule: one permission snapshot from candidates to response, hidden references removed from returned records, use kept per principal. Released only when two stores that differ only in records a principal may not read give that principal identical answers, and when a benchmark with thousands of buckets holds.
+8. `cmd/memoryd` and the HTTP API, with its own Postgres (pgvector) in a compose file.
+9. `embed` and the semantic source, under the same read rule.
+10. First connector and client: SourceAnt as a trusted issuer, a GitHub connector (one bucket per repository, collaborators synced as readers, records it cannot place in quarantine), the client and backfill.
+
+What recall answers at the end of step 10: SPEC §12.1, the `relevance` (lexical and semantic), `cue` and `recency` signals of §12.2, §12.4, §12.6 and §12.7, reading contradiction links that exist and the principal may read. Not yet: spreading (§12.3), the `importance`, `affect`, `authority` and `validity` signals, detecting contradictions, and the questions in §12.5 that need them.
+
+Later: `conformance` fixtures and the questions in SPEC §12.5, `spread`, `maintain`, publishing and the rest of SPEC §13.10.
+
+Each step ships something that can be tested on its own.

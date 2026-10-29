@@ -274,10 +274,10 @@ Done:
 Next. Access (SPEC §13) comes before anything serves real data, because a service with no access rule has nothing safe to serve:
 
 4. Storage boundary: workspace and bucket on every table; ids, source dedupe, identities and locks scoped to the workspace; a requirement set stored with every record and memory version; an authorization context every store method requires, kept apart from search filters, failing closed when absent.
-5. `access`: service credentials, trusted issuers and token checks, principals, roles, groups, grants by origin, delegations, account links, extraction sessions, the settings in SPEC §13.9.
+5. `access`: service credentials, trusted issuers and token checks, principals, roles, groups, grants by origin, delegations, account links, extraction sessions, the settings in SPEC §13.9. In place for the first connector: service credentials, trusted issuers and token checks, principals made on first sign-in, account links proven by the issuer, manual grants, synced readers that lapse, and a record of every change. Left: roles, groups, delegations, open mode, extraction sessions and the remaining settings.
 6. Capture and direct reads under the read rule (SPEC §13.3): dedupe, reference checks and errors reveal nothing hidden. Done with step 4: reads by id, reference checks, dedupe, taken ids, and references to hidden records removed from what is returned.
 7. Recall under the read rule: one permission snapshot from candidates to response, hidden references removed from returned records, use kept per principal. Released only when two stores that differ only in records a principal may not read give that principal identical answers, and when a benchmark with thousands of buckets holds. In place with step 4: the read rule in every candidate query, walk and count, hidden references removed, use per principal, and the identical answers test. Left: the benchmark.
-8. `cmd/memoryd` and the HTTP API, with its own Postgres (pgvector) in a compose file.
+8. `cmd/memoryd` and the HTTP API, with its own Postgres (pgvector) in a compose file. In place: write, read by id, recall, use, binding a bucket and syncing its readers; operator commands for workspaces, services, issuers and grants. Left: the OpenAPI document and the Go client.
 9. `embed` and the semantic source, under the same read rule.
 10. First connector and client: SourceAnt as a trusted issuer, a GitHub connector (one bucket per repository, collaborators synced as readers, records it cannot place in quarantine), the client and backfill.
 

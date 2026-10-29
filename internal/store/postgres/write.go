@@ -17,26 +17,36 @@ import (
 
 // Write stores a batch in one transaction.
 //
-// It runs in four passes so the result does not depend on the order records
+// It runs in five passes so the result does not depend on the order records
 // appear in: lock every id and source the batch touches, find which records
 // were already captured from the same source, rewrite every reference to the
-// stored ids, then write.
+// stored ids, work out each record's requirement set, then write.
 //
 // Ids found by deduplication are only known after the first locks are held,
 // so two batches can still wait on each other. Postgres then aborts one of
 // them, and that one starts over.
-func (s *Store) Write(ctx context.Context, given store.Batch) (store.Written, error) {
+func (s *Store) Write(ctx context.Context, access store.Access, given store.Batch) (store.Written, error) {
+	access, err := s.live(ctx, access)
+	if err != nil {
+		return store.Written{}, err
+	}
 	for attempt := 1; ; attempt++ {
-		out, err := s.write(ctx, given)
+		out, err := s.write(ctx, access, given)
 		var pgErr *pgconn.PgError
 		if attempt < 5 && errors.As(err, &pgErr) && pgErr.Code == "40P01" {
 			continue
+		}
+		// Deduplication only answers with records the writer may read, so a
+		// source already captured into a bucket it may not read is reported
+		// as taken, and nothing more about it.
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && strings.HasSuffix(pgErr.ConstraintName, "_source") {
+			return out, ErrTaken
 		}
 		return out, err
 	}
 }
 
-func (s *Store) write(ctx context.Context, given store.Batch) (store.Written, error) {
+func (s *Store) write(ctx context.Context, access store.Access, given store.Batch) (store.Written, error) {
 	out := store.Written{Stored: map[string]string{}}
 	b, err := clone(given)
 	if err != nil {
@@ -47,9 +57,12 @@ func (s *Store) write(ctx context.Context, given store.Batch) (store.Written, er
 		return out, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	w := &writer{tx: tx, out: &out, canonical: map[string]string{}}
+	w := &writer{tx: tx, out: &out, access: access, ws: access.Workspace, canonical: map[string]string{}}
 
-	if err := w.lock(ctx, lockKeys(b)); err != nil {
+	if err := w.buckets(ctx, b); err != nil {
+		return out, err
+	}
+	if err := w.lock(ctx, lockKeys(w.ws, b)); err != nil {
 		return out, err
 	}
 	if err := w.resolve(ctx, b); err != nil {
@@ -59,7 +72,7 @@ func (s *Store) write(ctx context.Context, given store.Batch) (store.Written, er
 	// writer using the stored id directly waits for this one.
 	var found []string
 	for _, stored := range w.canonical {
-		found = append(found, "id:"+stored)
+		found = append(found, idKey(w.ws, stored))
 	}
 	if err := w.lock(ctx, found); err != nil {
 		return out, err
@@ -69,6 +82,9 @@ func (s *Store) write(ctx context.Context, given store.Batch) (store.Written, er
 	}
 	w.rewrite(b)
 	if err := rewritten(b); err != nil {
+		return out, err
+	}
+	if err := w.plan(ctx, b); err != nil {
 		return out, err
 	}
 
@@ -88,6 +104,9 @@ func (s *Store) write(ctx context.Context, given store.Batch) (store.Written, er
 		if err := w.memory(ctx, m, lineage, refresh); err != nil {
 			return out, fmt.Errorf("memory %s: %w", m.ID, err)
 		}
+	}
+	if err := w.dependencies(ctx); err != nil {
+		return out, err
 	}
 	for _, a := range b.Appraisals {
 		if err := w.appraisal(ctx, a); err != nil {
@@ -117,9 +136,47 @@ func clone(b store.Batch) (*store.Batch, error) {
 type writer struct {
 	tx        pgx.Tx
 	out       *store.Written
+	access    store.Access
+	ws        string
 	now       time.Time
 	canonical map[string]string
 	givenIDs  map[string]bool
+	// requires is each batch record's requirement set, by stored id.
+	requires map[string][]string
+	// inputs is, for each batch memory, what it was made from with the
+	// version read.
+	inputs map[string][]input
+	// written is each memory version the batch added.
+	written []written
+}
+
+type written struct {
+	id      string
+	version int
+}
+
+// dependencies records what each new memory version was made from. It runs
+// once every memory in the batch is written, so one made from another in
+// the same batch names the version that other ended at.
+func (w *writer) dependencies(ctx context.Context) error {
+	for _, m := range w.written {
+		for _, in := range w.inputs[m.id] {
+			_, err := w.tx.Exec(ctx, `insert into dependencies (workspace_id, memory_id, version, input_id, input_version)
+				select $1, $2, $3, $4, case when $6 then (select version from memories
+					where workspace_id = $1 and id = $4 and superseded_at is null) else $5 end
+				on conflict do nothing`, w.ws, m.id, m.version, in.id, in.version, in.batch)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+type input struct {
+	id      string
+	version int
+	batch   bool
 }
 
 func (w *writer) id(given string) string {
@@ -129,18 +186,20 @@ func (w *writer) id(given string) string {
 	return given
 }
 
-func sourceKey(table string, src *record.Source) string {
+func idKey(ws, id string) string { return "id:" + ws + "\x1f" + id }
+
+func sourceKey(ws, table string, src *record.Source) string {
 	if src == nil || src.NativeID == "" {
 		return ""
 	}
-	return "src:" + table + ":" + src.System + "\x1f" + src.NativeID
+	return "src:" + table + ":" + ws + "\x1f" + src.System + "\x1f" + src.Installation + "\x1f" + src.NativeID
 }
 
-func lockKeys(b *store.Batch) []string {
+func lockKeys(ws string, b *store.Batch) []string {
 	var keys []string
 	add := func(id, table string, src *record.Source) {
-		keys = append(keys, "id:"+id)
-		if k := sourceKey(table, src); k != "" {
+		keys = append(keys, idKey(ws, id))
+		if k := sourceKey(ws, table, src); k != "" {
 			keys = append(keys, k)
 		}
 	}
@@ -186,7 +245,7 @@ func (w *writer) resolve(ctx context.Context, b *store.Batch) error {
 	first := map[string]string{}
 	find := func(table, id string, src *record.Source, current string) error {
 		w.givenIDs[id] = true
-		key := sourceKey(table, src)
+		key := sourceKey(w.ws, table, src)
 		if key == "" {
 			return nil
 		}
@@ -200,9 +259,13 @@ func (w *writer) resolve(ctx context.Context, b *store.Batch) error {
 		}
 		first[key] = id
 		var stored string
+		// Only a record the writer may read is answered with. One it may not
+		// stays unknown to it, and writing it again is refused as taken.
 		err := w.tx.QueryRow(ctx, `select id from `+table+
-			` where source_system is not distinct from $1 and source_native_id = $2`+current,
-			src.System, src.NativeID).Scan(&stored)
+			` where workspace_id = $1 and source_system is not distinct from $2
+			and source_installation is not distinct from nullif($3, '') and source_native_id = $4
+			and requires <@ $5`+current,
+			w.ws, src.System, src.Installation, src.NativeID, w.access.Read).Scan(&stored)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -298,15 +361,24 @@ func (w *writer) rewrite(b *store.Batch) {
 // stored kind, so it never changes.
 var ErrKind = errors.New("id already belongs to another kind of record")
 
+// ErrTaken is returned when an id belongs to a record the writer may not
+// read. It says no more than that, so it reveals nothing about the record.
+var ErrTaken = errors.New("id is already used in this workspace")
+
 // claim records which kind of record owns an id.
 func (w *writer) claim(ctx context.Context, id, kind string, class record.Class) error {
 	var owner, ownerClass string
 	err := w.tx.QueryRow(ctx, `
-		insert into record_ids (id, kind, class) values ($1, $2, nullif($3, ''))
-		on conflict (id) do update set id = excluded.id
-		returning kind, coalesce(class, '')`, id, kind, string(class)).Scan(&owner, &ownerClass)
+		insert into record_ids (workspace_id, id, kind, class) values ($1, $2, $3, nullif($4, ''))
+		on conflict (workspace_id, id) do update set id = excluded.id
+		returning kind, coalesce(class, '')`, w.ws, id, kind, string(class)).Scan(&owner, &ownerClass)
 	if err != nil {
 		return err
+	}
+	if visible, err := w.visible(ctx, id); err != nil {
+		return err
+	} else if !visible {
+		return fmt.Errorf("%w: %s", ErrTaken, id)
 	}
 	if owner != kind {
 		return fmt.Errorf("%w: %s is a %s", ErrKind, id, owner)
@@ -328,11 +400,14 @@ func (w *writer) unchanged(id string) {
 	w.out.Unchanged = append(w.out.Unchanged, id)
 }
 
-func source(src *record.Source) (system, native *string) {
+func source(src *record.Source) (system, installation, native *string) {
 	if src == nil || src.NativeID == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
-	return &src.System, &src.NativeID
+	if src.Installation != "" {
+		installation = &src.Installation
+	}
+	return &src.System, installation, &src.NativeID
 }
 
 func types(ts []record.Type) []string {
@@ -369,17 +444,23 @@ func (w *writer) entity(ctx context.Context, e record.Entity) error {
 	if err != nil {
 		return err
 	}
-	system, native := source(e.Source)
+	if err := w.stays(ctx, "entities", e.ID, e.Bucket); err != nil {
+		return err
+	}
+	system, installation, native := source(e.Source)
 	// Entities describe things that change (a name, a picture), so the newest
 	// description replaces the last.
 	tag, err := w.tx.Exec(ctx, `
-		insert into entities (id, class, type, name, parent_id, body, source_system, source_native_id, recorded_at)
-		values ($1, nullif($2, ''), $3, nullif($4, ''), nullif($5, ''), $6, $7, $8, $9)
-		on conflict (id) do update set class = excluded.class, type = excluded.type, name = excluded.name,
+		insert into entities (workspace_id, id, bucket_id, requires, class, type, name, parent_id, body,
+			source_system, source_installation, source_native_id, recorded_at)
+		values ($1, $2, $3, $4, nullif($5, ''), $6, nullif($7, ''), nullif($8, ''), $9, $10, $11, $12, $13)
+		on conflict (workspace_id, id) do update set class = excluded.class, type = excluded.type, name = excluded.name,
 			parent_id = excluded.parent_id, body = excluded.body, source_system = excluded.source_system,
+			source_installation = excluded.source_installation,
 			source_native_id = excluded.source_native_id, recorded_at = excluded.recorded_at
 		where entities.body is distinct from excluded.body`,
-		e.ID, string(e.Class), string(e.Type), e.Name, e.Parent, body, system, native, w.now)
+		w.ws, e.ID, e.Bucket, w.requires[e.ID], string(e.Class), string(e.Type), e.Name, e.Parent, body,
+		system, installation, native, w.now)
 	if err != nil {
 		return err
 	}
@@ -399,20 +480,25 @@ func (w *writer) identities(ctx context.Context, e record.Entity) error {
 		platforms[i], handles[i] = id.Platform, id.Handle
 	}
 	if _, err := w.tx.Exec(ctx, `
-		delete from identities where actor_id = $1
-		and (platform, handle) not in (select * from unnest($2::text[], $3::text[]))`, e.ID, platforms, handles); err != nil {
+		delete from identities where workspace_id = $1 and actor_id = $2
+		and (platform, handle) not in (select * from unnest($3::text[], $4::text[]))`, w.ws, e.ID, platforms, handles); err != nil {
 		return err
 	}
 	for _, id := range e.Identities {
 		var owner string
 		err := w.tx.QueryRow(ctx, `
-			insert into identities (platform, handle, actor_id) values ($1, $2, $3)
-			on conflict (platform, handle) do update set platform = excluded.platform
-			returning actor_id`, id.Platform, id.Handle, e.ID).Scan(&owner)
+			insert into identities (workspace_id, platform, handle, actor_id) values ($1, $2, $3, $4)
+			on conflict (workspace_id, platform, handle) do update set platform = excluded.platform
+			returning actor_id`, w.ws, id.Platform, id.Handle, e.ID).Scan(&owner)
 		if err != nil {
 			return err
 		}
 		if owner != e.ID {
+			if visible, err := w.visible(ctx, owner); err != nil {
+				return err
+			} else if !visible {
+				return fmt.Errorf("%s handle %s is already used in this workspace", id.Platform, id.Handle)
+			}
 			return fmt.Errorf("%s handle %s already belongs to %s", id.Platform, id.Handle, owner)
 		}
 	}
@@ -422,8 +508,9 @@ func (w *writer) identities(ctx context.Context, e record.Entity) error {
 func (w *writer) involve(ctx context.Context, kind, recordID string, version int, place string, participants []record.Participant, subjects []record.SubjectRef, involves []record.Involvement) error {
 	row := func(entity, via string, role record.Role) error {
 		_, err := w.tx.Exec(ctx, `
-			insert into involvements (record_kind, record_id, version, entity_id, via, role) values ($1, $2, $3, $4, $5, $6)
-			on conflict do nothing`, kind, recordID, version, entity, via, string(role))
+			insert into involvements (workspace_id, record_kind, record_id, version, entity_id, via, role)
+			values ($1, $2, $3, $4, $5, $6, $7)
+			on conflict do nothing`, w.ws, kind, recordID, version, entity, via, string(role))
 		return err
 	}
 	if place != "" {
@@ -453,8 +540,8 @@ func (w *writer) involve(ctx context.Context, kind, recordID string, version int
 // out, when there is one: it is derived from the record's profiles, not part
 // of the record, and rows stored before lineage was kept need repairing.
 func (w *writer) relineage(ctx context.Context, table, id string, lineage []record.Type) error {
-	_, err := w.tx.Exec(ctx, `update `+table+` set type_lineage = $2 where id = $1 and type_lineage is distinct from $2`+
-		map[string]string{"memories": ` and superseded_at is null`, "events": ``}[table], id, types(lineage))
+	_, err := w.tx.Exec(ctx, `update `+table+` set type_lineage = $3 where workspace_id = $1 and id = $2 and type_lineage is distinct from $3`+
+		map[string]string{"memories": ` and superseded_at is null`, "events": ``}[table], w.ws, id, types(lineage))
 	return err
 }
 
@@ -466,7 +553,10 @@ func (w *writer) event(ctx context.Context, e record.Event, lineage []record.Typ
 	if err != nil {
 		return err
 	}
-	exists, same, err := w.sameAs(ctx, "events", "id = $1", body, e.ID)
+	if err := w.stays(ctx, "events", e.ID, e.Bucket); err != nil {
+		return err
+	}
+	exists, same, err := w.sameAs(ctx, "events", "workspace_id = $1 and id = $2", body, w.ws, e.ID)
 	if err != nil {
 		return err
 	}
@@ -489,13 +579,14 @@ func (w *writer) event(ctx context.Context, e record.Event, lineage []record.Typ
 		p := string(e.OccurredAt.Precision)
 		precision = &p
 	}
-	system, native := source(e.Source)
+	system, installation, native := source(e.Source)
 	_, err = w.tx.Exec(ctx, `
-		insert into events (id, type, occurred_at, occurred_precision, ended_at, place_id, part_of, in_reply_to, body, said,
-			source_system, source_native_id, recorded_at, type_lineage)
-		values ($1, $2, $3, $4, $5, nullif($6, ''), nullif($7, ''), nullif($8, ''), $9, to_tsvector('english', $10), $11, $12, $13, $14)`,
-		e.ID, string(e.Type), at(e.OccurredAt), precision, at(e.EndedAt), e.Place, e.PartOf, e.InReplyTo, body,
-		strings.Join(texts, "\n"), system, native, w.now, types(lineage))
+		insert into events (workspace_id, id, bucket_id, requires, type, occurred_at, occurred_precision, ended_at, place_id,
+			part_of, in_reply_to, body, said, source_system, source_installation, source_native_id, recorded_at, type_lineage)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, nullif($9, ''), nullif($10, ''), nullif($11, ''), $12,
+			to_tsvector('english', $13), $14, $15, $16, $17, $18)`,
+		w.ws, e.ID, e.Bucket, w.requires[e.ID], string(e.Type), at(e.OccurredAt), precision, at(e.EndedAt), e.Place,
+		e.PartOf, e.InReplyTo, body, strings.Join(texts, "\n"), system, installation, native, w.now, types(lineage))
 	if err != nil {
 		return err
 	}
@@ -512,10 +603,14 @@ func (w *writer) memory(ctx context.Context, m record.Memory, lineage []record.T
 	if err != nil {
 		return err
 	}
+	if err := w.stays(ctx, "memories", m.ID, m.Bucket); err != nil {
+		return err
+	}
 	var version int
 	var same bool
-	err = w.tx.QueryRow(ctx, `select version, body = $2::jsonb from memories where id = $1 and superseded_at is null`,
-		m.ID, string(body)).Scan(&version, &same)
+	err = w.tx.QueryRow(ctx, `select version, body = $3::jsonb and requires @> $4 and $4 @> requires from memories
+		where workspace_id = $1 and id = $2 and superseded_at is null`,
+		w.ws, m.ID, string(body), w.requires[m.ID]).Scan(&version, &same)
 	switch {
 	case err == nil && same:
 		w.unchanged(m.ID)
@@ -524,7 +619,8 @@ func (w *writer) memory(ctx context.Context, m record.Memory, lineage []record.T
 		}
 		return nil
 	case err == nil:
-		if _, err := w.tx.Exec(ctx, `update memories set superseded_at = $2 where id = $1 and superseded_at is null`, m.ID, w.now); err != nil {
+		if _, err := w.tx.Exec(ctx, `update memories set superseded_at = $3 where workspace_id = $1 and id = $2 and superseded_at is null`,
+			w.ws, m.ID, w.now); err != nil {
 			return err
 		}
 	case !errors.Is(err, pgx.ErrNoRows):
@@ -532,21 +628,24 @@ func (w *writer) memory(ctx context.Context, m record.Memory, lineage []record.T
 	}
 
 	next := version + 1
-	system, native := source(m.Source)
+	system, installation, native := source(m.Source)
 	_, err = w.tx.Exec(ctx, `
-		insert into memories (id, version, type, statement, why, valid_from, valid_until, confidence, body, said,
-			source_system, source_native_id, recorded_at, type_lineage)
-		values ($1, $2, $3, $4, nullif($5, ''), $6, $7, $8, $9, to_tsvector('english', $4 || ' ' || $5), $10, $11, $12, $13)`,
-		m.ID, next, string(m.Type), m.Statement, m.Why, at(m.ValidFrom), at(m.ValidUntil), m.Confidence, body, system, native, w.now, types(lineage))
+		insert into memories (workspace_id, id, version, bucket_id, requires, type, statement, why, valid_from, valid_until,
+			confidence, body, said, source_system, source_installation, source_native_id, recorded_at, type_lineage)
+		values ($1, $2, $3, $4, $5, $6, $7, nullif($8, ''), $9, $10, $11, $12, to_tsvector('english', $7 || ' ' || $8),
+			$13, $14, $15, $16, $17)`,
+		w.ws, m.ID, next, m.Bucket, w.requires[m.ID], string(m.Type), m.Statement, m.Why, at(m.ValidFrom), at(m.ValidUntil),
+		m.Confidence, body, system, installation, native, w.now, types(lineage))
 	if err != nil {
 		return err
 	}
 	for _, ev := range m.Evidence {
-		if _, err := w.tx.Exec(ctx, `insert into evidence (memory_id, version, event_id, role) values ($1, $2, $3, $4) on conflict do nothing`,
-			m.ID, next, ev.Event, string(ev.Role)); err != nil {
+		if _, err := w.tx.Exec(ctx, `insert into evidence (workspace_id, memory_id, version, event_id, role) values ($1, $2, $3, $4, $5)
+			on conflict do nothing`, w.ws, m.ID, next, ev.Event, string(ev.Role)); err != nil {
 			return err
 		}
 	}
+	w.written = append(w.written, written{id: m.ID, version: next})
 	return w.involve(ctx, "memory", m.ID, next, "", m.Participants, m.Subjects, m.Involves)
 }
 
@@ -558,7 +657,10 @@ func (w *writer) appraisal(ctx context.Context, a record.Appraisal) error {
 	if err != nil {
 		return err
 	}
-	exists, same, err := w.sameAs(ctx, "appraisals", "id = $1", body, a.ID)
+	if err := w.stays(ctx, "appraisals", a.ID, a.Bucket); err != nil {
+		return err
+	}
+	exists, same, err := w.sameAs(ctx, "appraisals", "workspace_id = $1 and id = $2", body, w.ws, a.ID)
 	if err != nil {
 		return err
 	}
@@ -569,12 +671,13 @@ func (w *writer) appraisal(ctx context.Context, a record.Appraisal) error {
 		w.unchanged(a.ID)
 		return nil
 	}
-	system, native := source(a.Source)
+	system, installation, native := source(a.Source)
 	_, err = w.tx.Exec(ctx, `
-		insert into appraisals (id, target_id, by_id, at, valence, intensity, importance, surprise, confidence, body,
-			source_system, source_native_id, recorded_at)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-		a.ID, a.Target, a.By, at(a.At), a.Valence, a.Intensity, a.Importance, a.Surprise, a.Confidence, body, system, native, w.now)
+		insert into appraisals (workspace_id, id, bucket_id, requires, target_id, by_id, at, valence, intensity, importance,
+			surprise, confidence, body, source_system, source_installation, source_native_id, recorded_at)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+		w.ws, a.ID, a.Bucket, w.requires[a.ID], a.Target, a.By, at(a.At), a.Valence, a.Intensity, a.Importance,
+		a.Surprise, a.Confidence, body, system, installation, native, w.now)
 	return err
 }
 
@@ -586,7 +689,10 @@ func (w *writer) link(ctx context.Context, l record.Link) error {
 	if err != nil {
 		return err
 	}
-	exists, same, err := w.sameAs(ctx, "links", "id = $1", body, l.ID)
+	if err := w.stays(ctx, "links", l.ID, l.Bucket); err != nil {
+		return err
+	}
+	exists, same, err := w.sameAs(ctx, "links", "workspace_id = $1 and id = $2", body, w.ws, l.ID)
 	if err != nil {
 		return err
 	}
@@ -597,10 +703,12 @@ func (w *writer) link(ctx context.Context, l record.Link) error {
 		w.unchanged(l.ID)
 		return nil
 	}
-	system, native := source(l.Source)
+	system, installation, native := source(l.Source)
 	_, err = w.tx.Exec(ctx, `
-		insert into links (id, from_id, type, to_id, at, body, source_system, source_native_id, recorded_at)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		l.ID, l.From, string(l.Type), l.To, at(l.At), body, system, native, w.now)
+		insert into links (workspace_id, id, bucket_id, requires, from_id, type, to_id, at, body,
+			source_system, source_installation, source_native_id, recorded_at)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		w.ws, l.ID, l.Bucket, w.requires[l.ID], l.From, string(l.Type), l.To, at(l.At), body,
+		system, installation, native, w.now)
 	return err
 }

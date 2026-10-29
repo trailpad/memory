@@ -2,12 +2,15 @@ package record
 
 // Source says where a record itself came from.
 type Source struct {
-	System     string   `json:"system,omitempty"`
-	NativeID   string   `json:"native_id,omitempty"`
-	URL        string   `json:"url,omitempty"`
-	RecordedAt *Instant `json:"recorded_at,omitempty"`
-	Method     string   `json:"method,omitempty"`
-	By         string   `json:"by,omitempty"`
+	System string `json:"system,omitempty"`
+	// Installation is which account or install of the system the record
+	// came from. The same native id in two installations is two records.
+	Installation string   `json:"installation,omitempty"`
+	NativeID     string   `json:"native_id,omitempty"`
+	URL          string   `json:"url,omitempty"`
+	RecordedAt   *Instant `json:"recorded_at,omitempty"`
+	Method       string   `json:"method,omitempty"`
+	By           string   `json:"by,omitempty"`
 }
 
 // Class is which of the spec's named kinds an entity is. An entity of a kind
@@ -43,6 +46,7 @@ type Identity struct {
 // actor, a subject, or a kind a profile declares. The place and actor fields
 // are optional on any entity.
 type Entity struct {
+	Bucket     string     `json:"bucket"`
 	ID         string     `json:"id"`
 	Class      Class      `json:"class,omitempty"`
 	Type       Type       `json:"type"`
@@ -87,6 +91,7 @@ type Utterance struct {
 // Event is something that happened, once. Events are never changed after
 // capture; they are evidence.
 type Event struct {
+	Bucket       string        `json:"bucket"`
 	ID           string        `json:"id"`
 	Type         Type          `json:"type"`
 	OccurredAt   *Instant      `json:"occurred_at,omitempty"`
@@ -110,6 +115,14 @@ type Evidence struct {
 	Role  EvidenceRole `json:"role"`
 }
 
+// Dependency is a record a memory was made from. A memory is named with the
+// version that was read; none means the version current when the memory is
+// written. Events never change, so they carry none.
+type Dependency struct {
+	Record  string `json:"record"`
+	Version int    `json:"version,omitempty"`
+}
+
 // Rehearsal is how often and how lately a memory was brought back and used.
 // Only the store writes it.
 type Rehearsal struct {
@@ -120,6 +133,7 @@ type Rehearsal struct {
 // Memory is something learned that holds until it does not, drawn from one
 // or more events.
 type Memory struct {
+	Bucket       string        `json:"bucket"`
 	ID           string        `json:"id"`
 	Type         Type          `json:"type"`
 	Statement    string        `json:"statement"`
@@ -128,6 +142,7 @@ type Memory struct {
 	ValidUntil   *Instant      `json:"valid_until,omitempty"`
 	Confidence   *float64      `json:"confidence,omitempty"`
 	Evidence     []Evidence    `json:"evidence,omitempty"`
+	DependsOn    []Dependency  `json:"depends_on,omitempty"`
 	Subjects     []SubjectRef  `json:"subjects,omitempty"`
 	Participants []Participant `json:"participants,omitempty"`
 	Involves     []Involvement `json:"involves,omitempty"`
@@ -141,6 +156,7 @@ type Memory struct {
 // Appraisal is one judgement of how something landed, by someone, at a time.
 // A nil scale means that part was not judged.
 type Appraisal struct {
+	Bucket     string       `json:"bucket"`
 	ID         string       `json:"id"`
 	Target     string       `json:"target"`
 	By         string       `json:"by"`
@@ -158,6 +174,7 @@ type Appraisal struct {
 
 // Link is a typed relation between two records.
 type Link struct {
+	Bucket   string   `json:"bucket"`
 	ID       string   `json:"id"`
 	From     string   `json:"from"`
 	Type     Type     `json:"type"`

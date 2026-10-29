@@ -106,6 +106,7 @@ func (c *check) involves(field string, values []Involvement) {
 func (e Event) Validate() Problems {
 	var c check
 	c.id("id", e.ID)
+	c.id("bucket", e.Bucket)
 	c.typ("type", e.Type)
 	c.order("ended_at", e.OccurredAt, e.EndedAt)
 	c.participants("participants", e.Participants)
@@ -130,6 +131,7 @@ func (e Event) Validate() Problems {
 func (m Memory) Validate() Problems {
 	var c check
 	c.id("id", m.ID)
+	c.id("bucket", m.Bucket)
 	c.typ("type", m.Type)
 	if strings.TrimSpace(m.Statement) == "" {
 		c.add("statement", "is required")
@@ -141,6 +143,16 @@ func (m Memory) Validate() Problems {
 		c.id(at+".event", ev.Event)
 		if !ev.Role.valid() {
 			c.add(at+".role", "%q is not one of established, reinforced, refined, contradicted, retired", ev.Role)
+		}
+	}
+	for i, d := range m.DependsOn {
+		at := fmt.Sprintf("depends_on[%d]", i)
+		c.id(at+".record", d.Record)
+		if d.Version < 0 {
+			c.add(at+".version", "cannot be negative")
+		}
+		if d.Record != "" && d.Record == m.ID {
+			c.add(at+".record", "a memory cannot be made from itself")
 		}
 	}
 	c.participants("participants", m.Participants)
@@ -157,6 +169,7 @@ func (m Memory) Validate() Problems {
 func (e Entity) Validate() Problems {
 	var c check
 	c.id("id", e.ID)
+	c.id("bucket", e.Bucket)
 	c.typ("type", e.Type)
 	switch e.Class {
 	case "", PlaceClass, ActorClass, SubjectClass:
@@ -194,6 +207,7 @@ func (e Entity) Validate() Problems {
 func (a Appraisal) Validate() Problems {
 	var c check
 	c.id("id", a.ID)
+	c.id("bucket", a.Bucket)
 	c.id("target", a.Target)
 	c.id("by", a.By)
 	c.scale("valence", a.Valence, -2, 2)
@@ -216,6 +230,7 @@ func (a Appraisal) Validate() Problems {
 func (l Link) Validate() Problems {
 	var c check
 	c.id("id", l.ID)
+	c.id("bucket", l.Bucket)
 	c.id("from", l.From)
 	c.id("to", l.To)
 	c.typ("type", l.Type)

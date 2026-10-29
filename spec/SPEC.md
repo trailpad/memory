@@ -51,12 +51,14 @@ Place, actor and subject are the three kinds of **entity** this spec names. They
 - Places, actors, subjects and declared kinds are all **entities** and share one shape (§11.1). An entity says which of the named kinds it is with `class` (`place`, `actor`, `subject`); an entity of a kind declared by a profile has no `class`.
 - Any field may be absent. Absent means **unknown**, never a default. An event with no appraisal is unjudged, not neutral.
 - Every record carries `source`: where the record itself came from (§9).
+- Every record, and every entity, lives in one `bucket` (§13.2). The bucket decides who may read it; nothing in the record itself grants access.
 - A record written with types, roles or attributes from profiles lists them in `profiles` (`["crm@1"]`), so it still reads correctly after a profile changes.
 
 ## 4. Event
 
 ```json
 {
+  "bucket": "bk_shop",
   "id": "ev_01J...",
   "type": "github.pull_request.review_comment",
   "occurred_at": "2026-04-19T14:02:11Z",
@@ -116,6 +118,7 @@ Places nest. Where something was said is a path, not a label.
 
 ```json
 {
+  "bucket": "bk_shop",
   "id": "pl_pr_4521_thread_3",
   "class": "place",
   "type": "github.pull_request.review_thread",
@@ -141,7 +144,7 @@ email > thread "Gateway limits"
 |---|---|
 | `type` | Namespaced place type. It decides the icon and the default weight of what happens there. |
 | `parent` | The enclosing place. Recall can match at any level: "anything in #payments" includes its threads. |
-| `audience` | Who could see what happened here. It is the access rule for recall (§12.6). |
+| `audience` | Who could see what happened here, as the source described it. It is a fact about the place, not a permission: who may read the record of it is decided by its bucket (§13). |
 | `medium.sync` | Whether people were present at once (meeting, call) or not (thread, review). |
 | `medium.formality` | `casual`, `work`, `formal`, `binding`. A decision in a design review weighs more than one in a DM. |
 | `medium.record` | `written`, `transcribed`, `recalled`. A written comment is exact; notes after a call are someone's recollection. |
@@ -150,6 +153,7 @@ email > thread "Gateway limits"
 
 ```json
 {
+  "bucket": "bk_people",
   "id": "ac_ana",
   "class": "actor",
   "type": "person",
@@ -165,7 +169,7 @@ email > thread "Gateway limits"
 ```
 
 - `type`: `person`, `team`, `agent`, `bot`, `organisation`, or a namespaced type from a profile.
-- `identities` join one actor across platforms, so Ana in Slack and Ana on GitHub are one cue. Joining identities is a claim with a source and a confidence, never silent.
+- `identities` join one actor across platforms, so Ana in Slack and Ana on GitHub are one cue. Joining identities is a claim with a source and a confidence, never silent. It describes; it never signs anyone in or grants anything (§13.7).
 - An actor is the one record of who someone is. Their part in a given event or memory is a participant: the actor plus the role they hold there (`participants: [{ actor, role }]`).
 - An agent (a coding assistant, a review bot) is an actor too. What an agent said is evidence like anything else, with its own weight.
 
@@ -174,7 +178,7 @@ email > thread "Gateway limits"
 What events and memories are about.
 
 ```json
-{ "id": "sb_file_retry_go", "class": "subject", "type": "code.file", "name": "internal/retry/retry.go", "parent": "sb_repo_shop" }
+{ "bucket": "bk_shop", "id": "sb_file_retry_go", "class": "subject", "type": "code.file", "name": "internal/retry/retry.go", "parent": "sb_repo_shop" }
 ```
 
 Types are namespaced like places: `code.repository`, `code.file`, `code.symbol`, `ticket.issue`, `customer`, `product.feature`, `topic`. Subjects nest (`code.symbol` inside `code.file` inside `code.repository`) so recall can widen from a function to its file to its folder.
@@ -183,6 +187,7 @@ Types are namespaced like places: `code.repository`, `code.file`, `code.symbol`,
 
 ```json
 {
+  "bucket": "bk_shop",
   "id": "mm_retry_limit",
   "type": "constraint",
   "statement": "Retries to the payment gateway stop after three attempts.",
@@ -194,6 +199,7 @@ Types are namespaced like places: `code.repository`, `code.file`, `code.symbol`,
     { "event": "ev_01J...", "role": "established" },
     { "event": "ev_02K...", "role": "reinforced" }
   ],
+  "depends_on": [{ "record": "ev_meeting_0421" }],
   "subjects": [{ "subject": "sb_file_retry_go", "role": "about" }],
   "participants": [{ "actor": "ac_ana", "role": "decider" }],
   "appraisals": ["ap_..."],
@@ -209,6 +215,7 @@ Types are namespaced like places: `code.repository`, `code.file`, `code.symbol`,
 | `why` | The reason, so it can be judged when circumstances change. |
 | `valid_from`, `valid_until` | When it held in the world. |
 | `evidence` | The events it came from, each with a role: `established`, `reinforced`, `refined`, `contradicted`, `retired`. |
+| `depends_on` | Every record the memory was made from, with the version read: events and memories read while extracting it, retrieved context included, not only the ones it cites. The engine records what it served to the extraction; the writer may only add (§13.4). It decides who may read the memory. |
 | `recall` | How often and how lately it was brought back. Written by the store on recall, never by the caller. |
 
 A memory has two clocks, as in bi-temporal databases: `valid_from` / `valid_until` (when it was true) and `source.recorded_at` (when the store learned it). "What did we believe on 1 May?" and "what was true on 1 May?" are different questions and both must be answerable.
@@ -220,6 +227,7 @@ A memory has two clocks, as in bi-temporal databases: `valid_from` / `valid_unti
 ```json
 {
   "system": "github",
+  "installation": "41290377",
   "native_id": "PRRC_kwDO...",
   "url": "https://github.com/...",
   "recorded_at": "2026-04-19T14:05:00Z",
@@ -230,12 +238,15 @@ A memory has two clocks, as in bi-temporal databases: `valid_from` / `valid_unti
 
 `method`: `webhook`, `import`, `manual`, `extracted`, `inferred`. A memory extracted by a model says so; a person typing it in says so.
 
+`installation` names which account or install of the system the record came from (one Slack workspace, one GitHub App installation). Two records are the same record only when workspace, system, installation and `native_id` all match; the same `native_id` in two customers' Slack workspaces is two records.
+
 ### Appraisal
 
 How something landed is a judgement, not a property. Different people judge the same event differently, and judgements change.
 
 ```json
 {
+  "bucket": "bk_shop",
   "id": "ap_...",
   "target": "ev_01J...",
   "by": "ac_extractor_model",
@@ -266,7 +277,7 @@ A record's effective appraisal is a reduction of its appraisals (the latest from
 ## 10. Link
 
 ```json
-{ "id": "ln_7", "from": "mm_retry_limit_v2", "type": "supersedes", "to": "mm_retry_limit", "at": "2026-06-01T00:00:00Z", "source": { "...": "§9" } }
+{ "bucket": "bk_shop", "id": "ln_7", "from": "mm_retry_limit_v2", "type": "supersedes", "to": "mm_retry_limit", "at": "2026-06-01T00:00:00Z", "source": { "...": "§9" } }
 ```
 
 | Between | Types |
@@ -287,7 +298,7 @@ Events and memories in other fields carry things this spec does not name: a deal
 Place, actor and subject are kinds of one thing, an **entity**: something that exists apart from any one event and that events and memories can involve. Any new concept is a new entity type.
 
 ```json
-{ "id": "en_deal_884", "type": "crm.deal", "name": "Acme renewal 2027", "parent": "en_account_acme",
+{ "bucket": "bk_sales", "id": "en_deal_884", "type": "crm.deal", "name": "Acme renewal 2027", "parent": "en_account_acme",
   "attributes": { "crm.amount": { "value": 120000, "unit": "EUR" }, "crm.stage": "negotiation" }, "profiles": ["crm@1"] }
 ```
 
@@ -389,6 +400,7 @@ A recall request describes a situation, not only a string. The situation is the 
     "types": ["constraint", "decision"],
     "valence": { "max": -1 },
     "occurred": { "from": "2026-01-01", "to": "2026-07-01" },
+    "buckets": ["bk_shop"],
     "valid_at": "now",
     "places": { "under": "pl_slack_payments" },
     "attributes": { "crm.stage": ["negotiation"] }
@@ -402,6 +414,7 @@ A recall request describes a situation, not only a string. The situation is the 
 
 - `context`: what the caller is looking at. Every part is a cue.
 - `filters`: hard limits. A filtered-out record is never returned, whatever its score.
+- `buckets`: only records in these buckets. It narrows what the caller may read and never widens it (§12.6).
 - `valid_at`: only memories true at that time. Defaults to now; `null` includes retired memories.
 - `as_of`: answer as the store would have answered at that time (the recorded-time clock).
 - `expand`: also return the events behind each memory, and memories one link away.
@@ -465,13 +478,167 @@ These are the acceptance tests for the recall contract.
 
 ### 12.6 Access
 
-The audience of a place limits who may recall what happened there. A memory drawn from events in several places can be seen only by those who could see all of its evidence, unless someone with access promotes it to a wider audience; the promotion is itself a recorded event. Recall never returns, quotes or counts a record the caller cannot see.
+Every recall runs as a principal (§13.6) and sees only records it may read (§13.3). Records it may not read are removed before candidates are limited, counted or scored, so they never change what comes back, how it ranks, what is counted or what an explanation says. A caller can narrow a recall to some buckets; it can never widen it past what the principal may read.
 
 ### 12.7 Recall writes back
 
-A recall that a caller marks as used updates the memory's `recall` count and time. Recall that is only browsing does not. Rehearsal is an input to ranking, so it has to mean "this was useful", not "this was on screen".
+A recall that a caller marks as used updates the memory's `recall` count and time for that principal. Recall that is only browsing does not. Rehearsal is an input to ranking, so it has to mean "this was useful", not "this was on screen". Use is kept per principal: one person's use never changes how a memory ranks for another, because that would reveal what they were working on.
 
-## 13. Capture
+## 13. Access
+
+Being part of something is not permission to read the record of it. Someone can attend a disciplinary meeting, or be mentioned in it, without being allowed to read its notes. So who took part (participants, roles, mentions, a place's `audience`) describes what happened and never grants anything. Access comes only from grants on buckets.
+
+### 13.1 Concepts
+
+| Concept | What it is |
+|---|---|
+| Workspace | The boundary between customers. Holds principals, groups, buckets, grants and settings. Nothing is read, matched, counted or deduplicated across workspaces. |
+| Principal | Something that can act: a person, a bot, a service. Principals sign in; actors (§6) are who records talk about. The two are kept apart. |
+| Group | A named set of principals, such as `hr_readers`. |
+| Bucket | Where records live. Every record has exactly one. Reading a bucket is the first thing needed to read anything in it; some records need more (§13.3). |
+| Grant | Permission for a principal or group to act on a bucket: `read`, `write` or `administer`. |
+| Role | What a principal may do to the workspace itself: `owner` changes settings and trusted issuers and names other owners; `admin` manages principals, groups and grants. Neither role reads records. |
+
+A workspace's `external` reference names what it stands for outside the engine, `{ system, type, id }`, such as `{ "system": "sourceant", "type": "workspace", "id": "ws_42" }`. It describes; it never grants, and it is not the `owner` role.
+
+### 13.2 Buckets
+
+- Every record names its `bucket`. Entities do too: a place's name can itself be a secret (`#layoffs-2027`). Principals and groups belong to the workspace, not to a bucket.
+- One audience per bucket. A private source container (a private Slack channel, a private repository) gets its own bucket; broad shared spaces get broad buckets.
+- A bucket bound to a source is keyed by the source's permanent identifiers, never its name: `{ "system": "slack", "installation": "T024BE7LD", "container": "C012ABCDE" }`. Renaming the channel changes a label and nothing else.
+- A record whose bucket cannot be established goes to the workspace's quarantine bucket, which only principals granted it can read. It is never guessed into a broader one.
+- A record cannot move between buckets, and cannot be copied into another. Moving a record is publishing it, and publishing is not in this version (§13.10).
+
+### 13.3 Who may read a record
+
+Every record has a requirement set: the buckets someone must be able to read to read it.
+
+- An event or entity requires its own bucket.
+- A link requires its own bucket and the requirement sets of both ends.
+- An appraisal requires its own bucket and the requirement set of what it judges.
+- A memory version requires its own bucket and the requirement sets of everything it was made from (§13.4).
+
+A principal may read a record when it may read every bucket in the record's requirement set. Requirement sets are worked out when a record is written and stored with it, so reading never walks the graph to decide.
+
+This one rule decides everything a principal sees. It is applied before candidates are limited, counted or ranked; it applies to every way of reading (recall, reading by id, expanding evidence, walking places and links, checking references while capturing); and it is checked against one snapshot of permissions taken when the request starts.
+
+A record the principal may not read does not exist for it:
+
+- Returned records keep only references the principal may read. A reference to anything else is removed, not replaced with a marker.
+- Errors never confirm that a hidden record exists. Writing a reference to a record the writer may not read fails exactly as a reference to nothing does.
+- Deduplication never answers with a record the writer may not read.
+- An id or source already used by a record the writer may not read is refused as taken, and the refusal says nothing else about that record.
+
+As-of questions (§12.1) choose which version of what was known; they never choose whose permissions apply. Permissions are always the current ones: someone who left yesterday cannot read last year's records by asking about last year.
+
+### 13.4 Dependencies
+
+What a memory says can reveal what it was made from, whatever it cites. A model that read a private thread and a public one can write a memory citing only the public one and still repeat the private one. So a memory's readers are decided by everything it was made from, and the engine does not take the writer's word for what that was.
+
+- **Extraction runs in a session.** A service with the `extract` action opens a session, reads through the engine within it, and writes memories within it. The engine records every record it served in the session, with its version, and every memory written in the session depends on all of them. The writer can add to `depends_on` (for what it read elsewhere); it cannot remove what the engine recorded.
+- **Inputs carry versions.** A dependency names a record and, for a memory, the version that was read: `{ "record": "mm_retry_limit", "version": 3 }`. A memory named without a version means the version current when the new memory is written. Events never change, so they need none.
+- **Requirement sets are captured, not recomputed.** A memory version's requirement set is fixed when it is written, from the requirement sets of the input versions it read. A later, more restricted version of an input does not change memories made from the earlier one; a memory made from the later one inherits the restriction.
+- **New versions only add.** A new version of a memory keeps every requirement of the one before. Dropping a requirement would widen who may read it, which is publishing.
+- **Deleted buckets stay in requirement sets.** A bucket's id is never reused, and nobody may read a deleted bucket, so a memory made from one becomes unreadable rather than wider.
+- **People are accountable for what they type.** A memory written by a person outside a session (`method: manual`) requires its own bucket and what its writer declares. The engine cannot know what a person remembers; it records who wrote it.
+
+### 13.5 Grants
+
+A grant comes from one of three places, and each is kept apart so it can be changed and removed on its own:
+
+| Origin | Set by | Removed when |
+|---|---|---|
+| Manual | A principal with `administer` on the bucket or the workspace | Revoked by such a principal |
+| Synced | A connector, for buckets bound to its own installation (§13.8) | The source no longer lists the member, or synchronization goes stale |
+| Open | An owner, by turning on open mode | Open mode is turned off |
+
+- Reading, administering grants and publishing are separate rights. Administering a workspace does not let anyone read its records.
+- Adding a principal to a group is granting it everything the group may do, and needs the same rights as granting each of those directly.
+- An administrator giving themselves read, directly or by joining a group, follows the workspace setting: recorded, or approved by a second administrator.
+- Changing a setting removes the grants it created: turning open mode off removes open grants; switching a source-bound bucket back to mirroring removes its manual readers. The removal is recorded.
+- Every change to a grant is recorded with who made it, on whose behalf and when.
+- A change takes effect from the next request. A request already running keeps the snapshot it started with.
+
+### 13.6 Who is acting
+
+Every request answers three questions, and each answer is proven, never stated.
+
+**Which service is calling.** Each service has its own credential issued by the engine, scoped to one workspace, a fixed list of actions and, for a connector, its registered installations. Credentials can be revoked.
+
+**Who it acts for.** A person is identified by a short-lived token signed by an issuer the workspace trusts (an app the person signed in to, such as SourceAnt). The engine verifies it itself and requires:
+
+| Claim | Must be |
+|---|---|
+| `iss` | A trusted issuer of this workspace |
+| `sub` | The person's stable id at that issuer, linked to a principal |
+| `aud` | This engine |
+| `workspace` | The workspace of the request |
+| `azp` | The service making the request; a token issued to one service is refused from another |
+| `exp` | In the future, and no further than the workspace allows |
+
+Issuers publish their keys so they can be rotated, and removing an issuer revokes every token it signed. A service saying "this is Ana" without such a token is never enough.
+
+**What it may do.** The answer is the intersection of what the service's credential allows, what the person delegated to it, and what the person's grants allow. A connector holding an administrator's token still cannot administer grants, because its credential does not allow that action. A service with no person behind it, such as a nightly bot, acts as its own principal with its own grants.
+
+Delegation is a record in the workspace: `{ principal, service, buckets, actions, expires }`, created by the person themselves. The service an issuer is registered for (the app the person signed in to) acts with the person's own grants and needs none. Any other service acting for a person, such as an assistant, acts only within a delegation the person made for it, and without one acts for nobody.
+
+### 13.7 Linking accounts
+
+A source user (Slack user `U0ABC` in installation `T024BE7LD`) becomes a principal only through a verified link: the person signs in to a trusted issuer and proves the source account with that source's own sign-in. Links are kept apart from actors' `identities`:
+
+- A link is keyed by source, installation and the source's permanent user id.
+- One source account links to one principal. A second claim is refused until the first is removed.
+- Matching names, emails or handles never links anything. An account named "CEO" maps to nobody until someone proves it is theirs.
+- Writing an actor never changes a link.
+- Removing a link removes, at once, every synced grant that came through it. The principal keeps manual grants, which were given to the principal, not to the source account.
+
+### 13.8 Connectors
+
+A connector brings a source's records and permissions in.
+
+- It is registered with the engine for named installations, and its credential is limited to them. It can create buckets only for containers in those installations and change readers only of those buckets.
+- It puts a record in a container's bucket only when every member of the container may read that record at the source. Where a source shows newcomers only what was said after they joined, or restricts single items inside a container, those records go to a bucket of their own (one per audience) or to quarantine. A connector that cannot tell sends them to quarantine.
+- It reads membership from the source's API with its own source credential, never from what is said in a message.
+- Synchronization replaces a bucket's synced members completely. A sync that fails or is partial changes nothing and renews nothing.
+- Synced grants carry an expiry and are renewed only by a complete sync. A connector that stops syncing, or is removed, leaves grants that lapse rather than ones that last forever.
+- Manual grants on a source-bound bucket are allowed only when the workspace setting allows readers beyond the source.
+
+### 13.9 Settings
+
+What changes between a company that shares everything and one with HR and legal teams is settings. What makes the engine safe is not.
+
+| Setting | Level | Default |
+|---|---|---|
+| Open mode: every member reads buckets the workspace created itself | Workspace | Off |
+| Source-bound buckets: `mirror` the source exactly, `mirror_and_manual` (the source's members plus readers added by hand), or `open` (every member) | Workspace, per connector | `mirror` |
+| Administrators may grant themselves read, or need a second administrator | Workspace | May, and it is recorded |
+| Longest a person token may live | Workspace | 15 minutes |
+| How long a synced grant lasts without a complete sync | Workspace, per connector | 1 day |
+| Trusted issuers | Workspace | None |
+
+Open mode and `open` never reach the quarantine bucket. Only owners change settings.
+
+Fixed, whatever the settings:
+
+1. A caller cannot assert who it is or whom it acts for; both are proven.
+2. Unknown or unproven access never grants.
+3. Taking part in something never grants access to its record.
+4. A memory is never readable by anyone who may not read what it was made from.
+5. As-of questions use current permissions.
+6. Reading never implies the right to publish or to grant.
+7. Every way of reading and writing applies the same rule (§13.3).
+
+### 13.10 Not in this version
+
+Each needs rules of its own before it is safe:
+
+- Publishing: writing a memory's statement into a wider bucket, without its evidence, by someone entitled to release every bucket it depends on. This is how a report from accounting reaches the CEO without the CEO reading accounting.
+- Contradictions across buckets: finding them, telling the people who may read both sides, and an optional content-free flag for everyone else.
+- Moving or copying records between buckets.
+- Workspaces inside workspaces, and sharing between workspaces.
+- Anonymous readers for public projects.
+
+## 14. Capture
 
 How events get in is outside this spec, but the format asks capture for:
 
@@ -480,8 +647,10 @@ How events get in is outside this spec, but the format asks capture for:
 - Content verbatim, with speakers.
 - The parent event (`part_of`) for anything inside a meeting, thread, review or session.
 - Appraisal left empty rather than guessed when nothing supports a judgement.
+- The bucket of every record, chosen by the connector from the source's own permissions (§13.2), and quarantine when that cannot be established.
+- Extraction inside a session, so the engine knows what each extracted memory was made from (§13.4).
 
-## 14. Showing it
+## 15. Showing it
 
 The record carries what a timeline needs to be read at a glance:
 
@@ -490,14 +659,14 @@ The record carries what a timeline needs to be read at a glance:
 - Composite events open into their parts, so a meeting can be followed down to each memory it produced and forward to what happened to each one.
 - Appraisal places events by how they landed; importance sizes them.
 
-## 15. Not in this spec
+## 16. Not in this spec
 
 - How records are stored, indexed or sharded.
 - How a model extracts memories from events.
 - Embedding models and their dimensions.
 - The wire protocol. A reference service will define one; this document defines what it carries.
 
-## 16. Open questions
+## 17. Open questions
 
 1. Is `surprise` worth a field, or is it derivable from how far a memory moved the store?
 2. Should appraisal of a composite event be derived from its parts, or judged on its own?

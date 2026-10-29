@@ -39,6 +39,15 @@ func entity(id string, class record.Class, typ record.Type) record.Entity {
 type world struct {
 	capture *capture.Capture
 	store   *postgres.Store
+	access  store.Access
+}
+
+// buckets are the buckets the spec's examples are written in, and the one
+// other test records go to.
+var buckets = []string{"bk_test", "bk_shop", "bk_people", "bk_payments", "bk_sales"}
+
+func (w world) ingest(ctx context.Context, b store.Batch) (store.Written, error) {
+	return w.capture.Ingest(ctx, w.access, pgtest.InBucket(b, "bk_test"))
 }
 
 func setup(t *testing.T) world {
@@ -52,7 +61,8 @@ func setup(t *testing.T) world {
 	if err := profiles.Add(crm); err != nil {
 		t.Fatal(err)
 	}
-	return world{capture: &capture.Capture{Store: s, Profiles: profiles}, store: s}
+	return world{capture: &capture.Capture{Store: s, Profiles: profiles}, store: s,
+		access: pgtest.Workspace(t, s, "ws_test", "pr_test", buckets...)}
 }
 
 func mustRead(t *testing.T, path string) []byte {
@@ -101,18 +111,18 @@ func TestTheSpecsWorldIsStoredAndReadBack(t *testing.T) {
 	w := setup(t)
 	ctx := context.Background()
 	b := specWorld(t)
-	if _, err := w.capture.Ingest(ctx, b); err != nil {
+	if _, err := w.ingest(ctx, b); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := w.store.Event(ctx, "ev_01J")
+	got, err := w.store.Event(ctx, w.access, "ev_01J")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.Content[0].Text != b.Events[0].Content[0].Text || got.Place != "pl_pr_4521_thread_3" || len(got.Participants) != 3 {
 		t.Fatalf("event read back differently: %+v", got)
 	}
-	m, err := w.store.Memory(ctx, "mm_retry_limit", nil)
+	m, err := w.store.Memory(ctx, w.access, "mm_retry_limit", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +132,7 @@ func TestTheSpecsWorldIsStoredAndReadBack(t *testing.T) {
 	if m.Recall == nil || m.Recall.Count != 0 {
 		t.Fatalf("a writer cannot set how often a memory was used, got %+v", m.Recall)
 	}
-	deal, err := w.store.Entity(ctx, "en_deal_884")
+	deal, err := w.store.Entity(ctx, w.access, "en_deal_884")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +140,7 @@ func TestTheSpecsWorldIsStoredAndReadBack(t *testing.T) {
 		t.Fatalf("attributes read back as %s", deal.Attributes["crm.stage"])
 	}
 
-	again, err := w.capture.Ingest(ctx, specWorld(t))
+	again, err := w.ingest(ctx, specWorld(t))
 	if err != nil {
 		t.Fatalf("writing the same world twice must be harmless: %v", err)
 	}
@@ -142,12 +152,12 @@ func TestTheSpecsWorldIsStoredAndReadBack(t *testing.T) {
 func TestEventsNeverChange(t *testing.T) {
 	w := setup(t)
 	ctx := context.Background()
-	if _, err := w.capture.Ingest(ctx, specWorld(t)); err != nil {
+	if _, err := w.ingest(ctx, specWorld(t)); err != nil {
 		t.Fatal(err)
 	}
 	edited := example[record.Event](t, "event.review-comment.json")
 	edited.Content[0].Text = "Actually, four tries."
-	_, err := w.capture.Ingest(ctx, store.Batch{Events: []record.Event{edited}})
+	_, err := w.ingest(ctx, store.Batch{Events: []record.Event{edited}})
 	if !errors.Is(err, store.ErrChanged) {
 		t.Fatalf("an edited event must be refused, got %v", err)
 	}
@@ -156,7 +166,7 @@ func TestEventsNeverChange(t *testing.T) {
 func TestTheSameSourceIsCapturedOnce(t *testing.T) {
 	w := setup(t)
 	ctx := context.Background()
-	if _, err := w.capture.Ingest(ctx, specWorld(t)); err != nil {
+	if _, err := w.ingest(ctx, specWorld(t)); err != nil {
 		t.Fatal(err)
 	}
 	// The same review comment arrives again from a second webhook, under a
@@ -165,21 +175,21 @@ func TestTheSameSourceIsCapturedOnce(t *testing.T) {
 	repeat.ID = "ev_from_retry_webhook"
 	memory := record.Memory{ID: "mm_new", Type: "lesson", Statement: "Check vendor limits before adding retries.",
 		Evidence: []record.Evidence{{Event: "ev_from_retry_webhook", Role: record.Established}}}
-	written, err := w.capture.Ingest(ctx, store.Batch{Events: []record.Event{repeat}, Memories: []record.Memory{memory}})
+	written, err := w.ingest(ctx, store.Batch{Events: []record.Event{repeat}, Memories: []record.Memory{memory}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if written.Stored["ev_from_retry_webhook"] != "ev_01J" {
 		t.Fatalf("the repeat is the event already captured, got %v", written.Stored)
 	}
-	m, err := w.store.Memory(ctx, "mm_new", nil)
+	m, err := w.store.Memory(ctx, w.access, "mm_new", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if m.Evidence[0].Event != "ev_01J" {
 		t.Fatalf("evidence points at the stored event, got %s", m.Evidence[0].Event)
 	}
-	if _, err := w.store.Event(ctx, "ev_from_retry_webhook"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := w.store.Event(ctx, w.access, "ev_from_retry_webhook"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal("no second copy is stored")
 	}
 }
@@ -187,7 +197,7 @@ func TestTheSameSourceIsCapturedOnce(t *testing.T) {
 func TestMemoriesKeepEveryVersion(t *testing.T) {
 	w := setup(t)
 	ctx := context.Background()
-	if _, err := w.capture.Ingest(ctx, specWorld(t)); err != nil {
+	if _, err := w.ingest(ctx, specWorld(t)); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(20 * time.Millisecond)
@@ -197,11 +207,11 @@ func TestMemoriesKeepEveryVersion(t *testing.T) {
 	changed := example[record.Memory](t, "memory.retry-limit.json")
 	changed.Statement = "Retries to the payment gateway stop after two attempts."
 	changed.Recall = &record.Rehearsal{Count: 99}
-	if _, err := w.capture.Ingest(ctx, store.Batch{Memories: []record.Memory{changed}}); err != nil {
+	if _, err := w.ingest(ctx, store.Batch{Memories: []record.Memory{changed}}); err != nil {
 		t.Fatal(err)
 	}
 
-	now, err := w.store.Memory(ctx, "mm_retry_limit", nil)
+	now, err := w.store.Memory(ctx, w.access, "mm_retry_limit", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +221,7 @@ func TestMemoriesKeepEveryVersion(t *testing.T) {
 	if now.Recall.Count != 0 {
 		t.Fatalf("a writer cannot set how often a memory was used, got %d", now.Recall.Count)
 	}
-	then, err := w.store.Memory(ctx, "mm_retry_limit", &before)
+	then, err := w.store.Memory(ctx, w.access, "mm_retry_limit", &before)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,12 +238,12 @@ func TestNothingIsStoredWhenAReferenceIsMissing(t *testing.T) {
 		Events: []record.Event{{ID: "ev_1", Type: "slack.thread.message", Place: "pl_nowhere",
 			Participants: []record.Participant{{Actor: "ac_ana", Role: record.Author}}}},
 	}
-	_, err := w.capture.Ingest(ctx, b)
+	_, err := w.ingest(ctx, b)
 	var problems record.Problems
 	if !errors.As(err, &problems) || len(problems) != 1 || problems[0].Field != "events[0].place" {
 		t.Fatalf("the missing place is named, got %v", err)
 	}
-	if _, err := w.store.Entity(ctx, "ac_ana"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := w.store.Entity(ctx, w.access, "ac_ana"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal("nothing from a refused batch is stored")
 	}
 }
@@ -246,7 +256,7 @@ func TestRecordsFollowTheirProfiles(t *testing.T) {
 			Attributes: record.Attributes{"crm.stage": json.RawMessage(`"maybe"`)}},
 		{ID: "ev_2", Type: "care.visit", Profiles: []string{"care@1"}},
 	}}
-	_, err := w.capture.Ingest(ctx, b)
+	_, err := w.ingest(ctx, b)
 	var problems record.Problems
 	if !errors.As(err, &problems) {
 		t.Fatalf("want problems, got %v", err)
@@ -263,12 +273,12 @@ func TestRecordsFollowTheirProfiles(t *testing.T) {
 func TestAHandleBelongsToOneActor(t *testing.T) {
 	w := setup(t)
 	ctx := context.Background()
-	if _, err := w.capture.Ingest(ctx, specWorld(t)); err != nil {
+	if _, err := w.ingest(ctx, specWorld(t)); err != nil {
 		t.Fatal(err)
 	}
 	impostor := entity("ac_other", record.ActorClass, "person")
 	impostor.Identities = []record.Identity{{Platform: "github", Handle: "anaruiz"}}
-	_, err := w.capture.Ingest(ctx, store.Batch{Entities: []record.Entity{impostor}})
+	_, err := w.ingest(ctx, store.Batch{Entities: []record.Entity{impostor}})
 	if err == nil || !strings.Contains(err.Error(), "already belongs to ac_ana") {
 		t.Fatalf("joining a handle to a second actor must be refused, got %v", err)
 	}
@@ -277,18 +287,18 @@ func TestAHandleBelongsToOneActor(t *testing.T) {
 func TestJudgementsAndLinksAreNotRewritten(t *testing.T) {
 	w := setup(t)
 	ctx := context.Background()
-	if _, err := w.capture.Ingest(ctx, specWorld(t)); err != nil {
+	if _, err := w.ingest(ctx, specWorld(t)); err != nil {
 		t.Fatal(err)
 	}
 	judged := example[record.Appraisal](t, "appraisal.json")
 	v := 2
 	judged.Valence = &v
-	if _, err := w.capture.Ingest(ctx, store.Batch{Appraisals: []record.Appraisal{judged}}); !errors.Is(err, store.ErrChanged) {
+	if _, err := w.ingest(ctx, store.Batch{Appraisals: []record.Appraisal{judged}}); !errors.Is(err, store.ErrChanged) {
 		t.Fatalf("a changed judgement is a new appraisal, not an edit; got %v", err)
 	}
 	link := example[record.Link](t, "link.json")
 	link.Type = "refines"
-	if _, err := w.capture.Ingest(ctx, store.Batch{Links: []record.Link{link}}); !errors.Is(err, store.ErrChanged) {
+	if _, err := w.ingest(ctx, store.Batch{Links: []record.Link{link}}); !errors.Is(err, store.ErrChanged) {
 		t.Fatalf("a changed link must be refused; got %v", err)
 	}
 }
@@ -296,19 +306,19 @@ func TestJudgementsAndLinksAreNotRewritten(t *testing.T) {
 func TestEntitiesTakeTheirNewestDescription(t *testing.T) {
 	w := setup(t)
 	ctx := context.Background()
-	if _, err := w.capture.Ingest(ctx, specWorld(t)); err != nil {
+	if _, err := w.ingest(ctx, specWorld(t)); err != nil {
 		t.Fatal(err)
 	}
 	ana := example[record.Entity](t, "entity.actor.json")
 	ana.Name = "Ana Ruiz Pérez"
-	written, err := w.capture.Ingest(ctx, store.Batch{Entities: []record.Entity{ana}})
+	written, err := w.ingest(ctx, store.Batch{Entities: []record.Entity{ana}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(written.Unchanged) != 0 {
 		t.Fatal("a renamed entity is a change")
 	}
-	got, err := w.store.Entity(ctx, "ac_ana")
+	got, err := w.store.Entity(ctx, w.access, "ac_ana")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,10 +331,10 @@ func TestAMemoryDidNotExistBeforeItWasRecorded(t *testing.T) {
 	w := setup(t)
 	ctx := context.Background()
 	before := time.Now().Add(-time.Hour)
-	if _, err := w.capture.Ingest(ctx, specWorld(t)); err != nil {
+	if _, err := w.ingest(ctx, specWorld(t)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.store.Memory(ctx, "mm_retry_limit", &before); !errors.Is(err, store.ErrNotFound) {
+	if _, err := w.store.Memory(ctx, w.access, "mm_retry_limit", &before); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("asked as of an hour ago, got %v", err)
 	}
 }
@@ -338,7 +348,7 @@ func TestEvidenceAndJudgementsMustPointAtSomething(t *testing.T) {
 		Appraisals: []record.Appraisal{{ID: "ap_1", Target: "mm_1", By: "ac_nobody", Intensity: ptr(2)}},
 		Links:      []record.Link{{ID: "ln_1", From: "mm_1", Type: "refines", To: "mm_gone"}},
 	}
-	_, err := w.capture.Ingest(ctx, b)
+	_, err := w.ingest(ctx, b)
 	var problems record.Problems
 	if !errors.As(err, &problems) {
 		t.Fatalf("want problems, got %v", err)
@@ -375,10 +385,10 @@ func problemFields(t *testing.T, err error) map[string]string {
 func TestReferencesMustPointAtTheRightKind(t *testing.T) {
 	w := setup(t)
 	ctx := context.Background()
-	if _, err := w.capture.Ingest(ctx, specWorld(t)); err != nil {
+	if _, err := w.ingest(ctx, specWorld(t)); err != nil {
 		t.Fatal(err)
 	}
-	_, err := w.capture.Ingest(ctx, store.Batch{
+	_, err := w.ingest(ctx, store.Batch{
 		Events: []record.Event{{ID: "ev_x", Type: "slack.thread.message", Place: "ac_ana",
 			Participants: []record.Participant{{Actor: "sb_file_retry_go", Role: record.Author}}}},
 		Appraisals: []record.Appraisal{{ID: "ap_x", Target: "ev_01J", By: "mm_retry_limit", Intensity: ptr(2)}},
@@ -402,11 +412,11 @@ func TestReferencesMustPointAtTheRightKind(t *testing.T) {
 func TestAnIdNamesOneRecord(t *testing.T) {
 	w := setup(t)
 	ctx := context.Background()
-	if _, err := w.capture.Ingest(ctx, specWorld(t)); err != nil {
+	if _, err := w.ingest(ctx, specWorld(t)); err != nil {
 		t.Fatal(err)
 	}
 	fields := problemFields(t, func() error {
-		_, err := w.capture.Ingest(ctx, store.Batch{Memories: []record.Memory{
+		_, err := w.ingest(ctx, store.Batch{Memories: []record.Memory{
 			{ID: "mm_twice", Type: "fact", Statement: "a"},
 			{ID: "mm_twice", Type: "fact", Statement: "b"},
 		}})
@@ -415,7 +425,7 @@ func TestAnIdNamesOneRecord(t *testing.T) {
 	if !strings.Contains(fields["memories[1].id"], "more than once") {
 		t.Fatalf("a repeated id in one batch is named, got %v", fields)
 	}
-	_, err := w.capture.Ingest(ctx, store.Batch{Memories: []record.Memory{{ID: "ev_01J", Type: "fact", Statement: "x"}}})
+	_, err := w.ingest(ctx, store.Batch{Memories: []record.Memory{{ID: "ev_01J", Type: "fact", Statement: "x"}}})
 	if !errors.Is(err, postgres.ErrKind) {
 		t.Fatalf("a memory cannot take an event's id, got %v", err)
 	}
@@ -426,7 +436,7 @@ func TestDuplicatesResolveWhateverTheirOrderInTheBatch(t *testing.T) {
 	ctx := context.Background()
 	team := entity("ac_team_old", record.ActorClass, "team")
 	team.Source = &record.Source{System: "slack", NativeID: "S01TEAM"}
-	if _, err := w.capture.Ingest(ctx, store.Batch{Entities: []record.Entity{team}}); err != nil {
+	if _, err := w.ingest(ctx, store.Batch{Entities: []record.Entity{team}}); err != nil {
 		t.Fatal(err)
 	}
 	member := entity("ac_member", record.ActorClass, "person")
@@ -434,21 +444,21 @@ func TestDuplicatesResolveWhateverTheirOrderInTheBatch(t *testing.T) {
 	again := entity("ac_team_new", record.ActorClass, "team")
 	again.Name = "Payments"
 	again.Source = &record.Source{System: "slack", NativeID: "S01TEAM"}
-	written, err := w.capture.Ingest(ctx, store.Batch{Entities: []record.Entity{member, again}})
+	written, err := w.ingest(ctx, store.Batch{Entities: []record.Entity{member, again}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if written.Stored["ac_team_new"] != "ac_team_old" {
 		t.Fatalf("the team is the one already captured, got %v", written.Stored)
 	}
-	got, err := w.store.Entity(ctx, "ac_member")
+	got, err := w.store.Entity(ctx, w.access, "ac_member")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.MemberOf[0] != "ac_team_old" {
 		t.Fatalf("membership written before the team in the batch still points at the stored team, got %v", got.MemberOf)
 	}
-	stored, _ := w.store.Entity(ctx, "ac_team_old")
+	stored, _ := w.store.Entity(ctx, w.access, "ac_team_old")
 	if stored.Name != "Payments" {
 		t.Fatalf("a duplicate's newer description is kept, got %q", stored.Name)
 	}
@@ -458,16 +468,16 @@ func TestAnEntitysSourceCanBeAddedLater(t *testing.T) {
 	w := setup(t)
 	ctx := context.Background()
 	plain := entity("ac_a", record.ActorClass, "person")
-	if _, err := w.capture.Ingest(ctx, store.Batch{Entities: []record.Entity{plain}}); err != nil {
+	if _, err := w.ingest(ctx, store.Batch{Entities: []record.Entity{plain}}); err != nil {
 		t.Fatal(err)
 	}
 	plain.Source = &record.Source{System: "github", NativeID: "123"}
-	if _, err := w.capture.Ingest(ctx, store.Batch{Entities: []record.Entity{plain}}); err != nil {
+	if _, err := w.ingest(ctx, store.Batch{Entities: []record.Entity{plain}}); err != nil {
 		t.Fatal(err)
 	}
 	other := entity("ac_b", record.ActorClass, "person")
 	other.Source = &record.Source{System: "github", NativeID: "123"}
-	written, err := w.capture.Ingest(ctx, store.Batch{Entities: []record.Entity{other}})
+	written, err := w.ingest(ctx, store.Batch{Entities: []record.Entity{other}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,17 +489,17 @@ func TestAnEntitysSourceCanBeAddedLater(t *testing.T) {
 func TestADroppedHandleIsReleased(t *testing.T) {
 	w := setup(t)
 	ctx := context.Background()
-	if _, err := w.capture.Ingest(ctx, specWorld(t)); err != nil {
+	if _, err := w.ingest(ctx, specWorld(t)); err != nil {
 		t.Fatal(err)
 	}
 	ana := example[record.Entity](t, "entity.actor.json")
 	ana.Identities = []record.Identity{{Platform: "github", Handle: "ana-r"}}
-	if _, err := w.capture.Ingest(ctx, store.Batch{Entities: []record.Entity{ana}}); err != nil {
+	if _, err := w.ingest(ctx, store.Batch{Entities: []record.Entity{ana}}); err != nil {
 		t.Fatal(err)
 	}
 	someone := entity("ac_other", record.ActorClass, "person")
 	someone.Identities = []record.Identity{{Platform: "github", Handle: "anaruiz"}}
-	if _, err := w.capture.Ingest(ctx, store.Batch{Entities: []record.Entity{someone}}); err != nil {
+	if _, err := w.ingest(ctx, store.Batch{Entities: []record.Entity{someone}}); err != nil {
 		t.Fatalf("a handle Ana gave up can be claimed, got %v", err)
 	}
 }
@@ -499,12 +509,12 @@ func TestEventsCompareNumbersExactly(t *testing.T) {
 	ctx := context.Background()
 	first := record.Event{ID: "ev_n", Type: "metrics.sample",
 		Attributes: record.Attributes{"metrics.count": json.RawMessage(`9007199254740992`)}}
-	if _, err := w.capture.Ingest(ctx, store.Batch{Events: []record.Event{first}}); err != nil {
+	if _, err := w.ingest(ctx, store.Batch{Events: []record.Event{first}}); err != nil {
 		t.Fatal(err)
 	}
 	second := first
 	second.Attributes = record.Attributes{"metrics.count": json.RawMessage(`9007199254740993`)}
-	if _, err := w.capture.Ingest(ctx, store.Batch{Events: []record.Event{second}}); !errors.Is(err, store.ErrChanged) {
+	if _, err := w.ingest(ctx, store.Batch{Events: []record.Event{second}}); !errors.Is(err, store.ErrChanged) {
 		t.Fatalf("a different large number is a change, got %v", err)
 	}
 }
@@ -512,13 +522,13 @@ func TestEventsCompareNumbersExactly(t *testing.T) {
 func TestEarlierVersionsKeepTheirTies(t *testing.T) {
 	w := setup(t)
 	ctx := context.Background()
-	if _, err := w.capture.Ingest(ctx, specWorld(t)); err != nil {
+	if _, err := w.ingest(ctx, specWorld(t)); err != nil {
 		t.Fatal(err)
 	}
 	changed := example[record.Memory](t, "memory.retry-limit.json")
 	changed.Participants = []record.Participant{{Actor: "ac_ben", Role: record.Decider}}
 	changed.Evidence = []record.Evidence{{Event: "ev_02K", Role: record.Established}}
-	if _, err := w.capture.Ingest(ctx, store.Batch{Memories: []record.Memory{changed}}); err != nil {
+	if _, err := w.ingest(ctx, store.Batch{Memories: []record.Memory{changed}}); err != nil {
 		t.Fatal(err)
 	}
 	var ties, evidence int
@@ -537,19 +547,19 @@ func TestEarlierVersionsKeepTheirTies(t *testing.T) {
 func TestAFailedBatchLeavesNothingBehind(t *testing.T) {
 	w := setup(t)
 	ctx := context.Background()
-	if _, err := w.capture.Ingest(ctx, specWorld(t)); err != nil {
+	if _, err := w.ingest(ctx, specWorld(t)); err != nil {
 		t.Fatal(err)
 	}
 	edited := example[record.Event](t, "event.review-comment.json")
 	edited.Content[0].Text = "Four tries."
-	_, err := w.capture.Ingest(ctx, store.Batch{
+	_, err := w.ingest(ctx, store.Batch{
 		Entities: []record.Entity{entity("ac_new", record.ActorClass, "person")},
 		Events:   []record.Event{edited},
 	})
 	if !errors.Is(err, store.ErrChanged) {
 		t.Fatalf("the edited event fails inside the store, got %v", err)
 	}
-	if _, err := w.store.Entity(ctx, "ac_new"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := w.store.Entity(ctx, w.access, "ac_new"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal("the entity written earlier in the same batch was rolled back")
 	}
 }
@@ -557,7 +567,7 @@ func TestAFailedBatchLeavesNothingBehind(t *testing.T) {
 func TestTwoWritersAtOnce(t *testing.T) {
 	w := setup(t)
 	ctx := context.Background()
-	if _, err := w.capture.Ingest(ctx, specWorld(t)); err != nil {
+	if _, err := w.ingest(ctx, specWorld(t)); err != nil {
 		t.Fatal(err)
 	}
 	run := func(batches ...store.Batch) []error {
@@ -567,7 +577,7 @@ func TestTwoWritersAtOnce(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				_, errs[i] = w.capture.Ingest(ctx, b)
+				_, errs[i] = w.ingest(ctx, b)
 			}()
 		}
 		wg.Wait()
@@ -617,7 +627,7 @@ func TestASourceRepeatedInOneBatchIsOneRecord(t *testing.T) {
 	w := setup(t)
 	ctx := context.Background()
 	src := &record.Source{System: "slack", NativeID: "msg-88"}
-	written, err := w.capture.Ingest(ctx, store.Batch{
+	written, err := w.ingest(ctx, store.Batch{
 		Entities: []record.Entity{entity("ac_unrelated", record.ActorClass, "person")},
 		Events: []record.Event{
 			{ID: "ev_e1", Type: "slack.thread.message", Source: src},
@@ -637,13 +647,13 @@ func TestDeduplicationCannotMakeARecordItsOwnParent(t *testing.T) {
 	ctx := context.Background()
 	a := entity("sb_a", record.SubjectClass, "code.file")
 	a.Source = &record.Source{System: "github", NativeID: "file-1"}
-	if _, err := w.capture.Ingest(ctx, store.Batch{Entities: []record.Entity{a}}); err != nil {
+	if _, err := w.ingest(ctx, store.Batch{Entities: []record.Entity{a}}); err != nil {
 		t.Fatal(err)
 	}
 	b := entity("sb_b", record.SubjectClass, "code.file")
 	b.Source = a.Source
 	b.Parent = "sb_a"
-	_, err := w.capture.Ingest(ctx, store.Batch{Entities: []record.Entity{b}})
+	_, err := w.ingest(ctx, store.Batch{Entities: []record.Entity{b}})
 	if fields := problemFields(t, err); fields["entities[0].parent"] == "" {
 		t.Fatalf("want a problem on parent, got %v", fields)
 	}
@@ -652,13 +662,13 @@ func TestDeduplicationCannotMakeARecordItsOwnParent(t *testing.T) {
 func TestAnEntityKeepsItsClass(t *testing.T) {
 	w := setup(t)
 	ctx := context.Background()
-	if _, err := w.capture.Ingest(ctx, specWorld(t)); err != nil {
+	if _, err := w.ingest(ctx, specWorld(t)); err != nil {
 		t.Fatal(err)
 	}
 	ana := example[record.Entity](t, "entity.actor.json")
 	ana.Class = record.SubjectClass
 	ana.Type = "code.file"
-	if _, err := w.capture.Ingest(ctx, store.Batch{Entities: []record.Entity{ana}}); !errors.Is(err, postgres.ErrKind) {
+	if _, err := w.ingest(ctx, store.Batch{Entities: []record.Entity{ana}}); !errors.Is(err, postgres.ErrKind) {
 		t.Fatalf("an actor cannot become a subject, got %v", err)
 	}
 
@@ -666,10 +676,10 @@ func TestAnEntityKeepsItsClass(t *testing.T) {
 	impostor.Source = &record.Source{System: "github", NativeID: "ana-source"}
 	ana = example[record.Entity](t, "entity.actor.json")
 	ana.Source = impostor.Source
-	if _, err := w.capture.Ingest(ctx, store.Batch{Entities: []record.Entity{ana}}); err != nil {
+	if _, err := w.ingest(ctx, store.Batch{Entities: []record.Entity{ana}}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := w.capture.Ingest(ctx, store.Batch{
+	_, err := w.ingest(ctx, store.Batch{
 		Entities: []record.Entity{impostor},
 		Events: []record.Event{{ID: "ev_by_ana", Type: "slack.thread.message",
 			Participants: []record.Participant{{Actor: "ac_ana", Role: record.Author}}}},
@@ -677,7 +687,7 @@ func TestAnEntityKeepsItsClass(t *testing.T) {
 	if !errors.Is(err, postgres.ErrKind) {
 		t.Fatalf("a subject sharing Ana's source cannot overwrite her, got %v", err)
 	}
-	if got, _ := w.store.Entity(ctx, "ac_ana"); got.Class != record.ActorClass {
+	if got, _ := w.store.Entity(ctx, w.access, "ac_ana"); got.Class != record.ActorClass {
 		t.Fatalf("Ana is still an actor, got %q", got.Class)
 	}
 }
@@ -688,7 +698,7 @@ func TestAnAliasRacingTheStoredRecord(t *testing.T) {
 	src := &record.Source{System: "github", NativeID: "user-9"}
 	stored := entity("ac_canonical", record.ActorClass, "person")
 	stored.Source = src
-	if _, err := w.capture.Ingest(ctx, store.Batch{Entities: []record.Entity{stored}}); err != nil {
+	if _, err := w.ingest(ctx, store.Batch{Entities: []record.Entity{stored}}); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 20; i++ {
@@ -703,7 +713,7 @@ func TestAnAliasRacingTheStoredRecord(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				_, errs[j] = w.capture.Ingest(ctx, store.Batch{Entities: []record.Entity{e}})
+				_, errs[j] = w.ingest(ctx, store.Batch{Entities: []record.Entity{e}})
 			}()
 		}
 		wg.Wait()

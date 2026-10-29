@@ -3,8 +3,9 @@
   "$id": "https://schema.trailpad.ai/memory/0.1/event.json",
   "title": "Event",
   "type": "object",
-  "required": ["id", "type"],
+  "required": ["bucket", "id", "type"],
   "properties": {
+    "bucket": { "$ref": "common.json#/$defs/id" },
     "id": { "$ref": "common.json#/$defs/id" },
     "type": { "$ref": "common.json#/$defs/type" },
     "occurred_at": { "$ref": "common.json#/$defs/instant" },

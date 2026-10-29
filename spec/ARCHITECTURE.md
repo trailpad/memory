@@ -111,8 +111,11 @@ memory/
 │   │       ├── authority.go     place formality and participants' roles
 │   │       └── validity.go      contradicted but not retired
 │   │
-│   ├── access/
-│   │   └── audience.go          who may see what, as SQL predicates
+│   ├── access/                  SPEC §13
+│   │   ├── principal.go         principals, groups, account links
+│   │   ├── grant.go             grants by origin, settings, open mode
+│   │   ├── token.go             service credentials, issuer tokens, delegation
+│   │   └── snapshot.go          what a principal may read, fixed per request
 │   │
 │   ├── embed/
 │   │   └── embed.go             Embedder interface; providers are adapters,
@@ -184,11 +187,13 @@ Every stage is a plain function over a slice of candidates, so each can be teste
 
 ## 4. Storage
 
-Tables (one per record kind) plus the joins that make cues queryable:
+Tables (one per record kind) plus the joins that make cues queryable. Every table but `profiles` carries `workspace_id`, which leads every key and index: ids, sources and handles are unique within a workspace, never across.
 
 | Table | Holds | Indexes |
 |---|---|---|
-| `record_ids` | every id, with its record kind and entity class | `id` primary key |
+| `workspaces` | the boundary between customers, with its outside reference | `id` primary key |
+| `buckets` | where records live, with the source container a bucket mirrors; deleted rows stay | `(workspace_id, id)`, binding unique, one quarantine per workspace |
+| `record_ids` | every id, with its record kind and entity class | `(workspace_id, id)` primary key |
 | `events` | events, append only | `occurred_at`, `place_id`, `part_of`, full text on content |
 | `memories` | memories, one row per version | `valid_from`, `valid_until`, `recorded_at`, full text, vector |
 | `entities` | places, actors, subjects and every declared kind, one table | `parent_id`, `type` |
@@ -198,13 +203,17 @@ Tables (one per record kind) plus the joins that make cues queryable:
 | `appraisals` | judgements | `(target_id, at)`, source unique |
 | `links` | typed relations | `(from_id, type)`, `(to_id, type)`, source unique |
 | `cue_counts` | how many records each cue touches | refreshed by `maintain/graph.go`, used for rarity |
-| `identities` | platform handles to actors | `(platform, handle)` unique |
+| `identities` | platform handles to actors | `(workspace_id, platform, handle)` unique |
+| `dependencies` | memory version, input, version of the input read | `(input_id)` |
+| `rehearsals` | each use of a memory, by whom and when | `(memory_id, principal, recorded_at)` |
+
+Every record row (each memory version on its own) has a `bucket_id` and a `requires` array: the buckets someone must be able to read to read it (SPEC §13.3). Reading is one predicate, `requires <@ readable`, on a GIN index, so the rule is checked without walking links or dependencies.
 
 Attributes are a JSONB column on records and entities. When a profile marks an attribute filterable, the engine creates an expression index for that key, so a new field becomes fast to filter on without a code change.
 
 Nesting (place inside place, subject inside subject) is stored as a parent column and queried with recursive CTEs. If those get slow, a materialised path column replaces them.
 
-An id names exactly one record. `record_ids` enforces it across tables, so a reference never needs to say which table it points into, and capture can check that each reference points at the kind its field asks for (a `by` at an actor, a `place` at a place).
+An id names exactly one record in a workspace. `record_ids` enforces it across tables, so a reference never needs to say which table it points into, and capture can check that each reference points at the kind its field asks for (a `by` at an actor, a `place` at a place).
 
 Both clocks are columns on `memories`: `valid_from` / `valid_until` for the world, `recorded_at` / `superseded_at` for the store. `as_of` recall filters on the second pair. A memory's involvements and evidence are kept per version, so an earlier version keeps the people and events it was tied to.
 
@@ -213,16 +222,18 @@ Both clocks are columns on `memories`: `valid_from` / `valid_until` for the worl
 ```
  client ─► api ─► capture.ingest
                     ├── validate (record, profile attributes and dimensions)
-                    ├── check references (present, and of the right kind)
+                    ├── check references (present, readable, and of the right kind)
                     └── store.Write, one transaction
+                          ├── check every bucket written into is writable
                           ├── lock every id and source the batch touches
-                          ├── dedupe on source system + native id
+                          ├── dedupe on workspace, source system, installation, native id
                           ├── rewrite references to the stored ids
+                          ├── work out each record's requirement set
                           ├── write
                           └── queue: embed, cue counts
 ```
 
-Locks are taken in sorted order, so two batches touching the same records wait for each other rather than deadlocking or racing to insert the same source twice. Deduplication finishes before any reference is rewritten, so the result does not depend on the order of records in a batch.
+Locks are taken in sorted order, so two batches touching the same records wait for each other rather than deadlocking or racing to insert the same source twice. Deduplication finishes before any reference is rewritten, so the result does not depend on the order of records in a batch. Requirement sets are worked out after that: a record's own bucket, joined with the sets of what it is made from, judges or links, read as stored when outside the batch, and with everything its memory's current version required.
 
 Writes return once the transaction commits. Embedding and cue counts follow shortly after, and recall works without them (the lexical and cue sources still answer).
 
@@ -253,13 +264,25 @@ The application keeps its own model and screens. The memory service is where its
 
 ## 8. Order of work
 
+Done:
+
 1. `record`, `profile` (with the core profile) and `spec/schema`: types and JSON Schema agree on the spec's examples; validation.
 2. `store/postgres` with migrations; `capture` without embeddings.
 3. `recall` with lexical and cue sources only, `explain` from day one.
-4. `conformance` fixtures and the first four questions.
-5. `embed` and the semantic source.
-6. `spread` (personalised PageRank).
-7. `maintain`, `access` hardened, the remaining questions.
-8. Clients.
+4. Storage boundary (below).
 
-Each step ships something that answers questions, so recall quality can be measured from step 3 on.
+Next. Access (SPEC §13) comes before anything serves real data, because a service with no access rule has nothing safe to serve:
+
+4. Storage boundary: workspace and bucket on every table; ids, source dedupe, identities and locks scoped to the workspace; a requirement set stored with every record and memory version; an authorization context every store method requires, kept apart from search filters, failing closed when absent.
+5. `access`: service credentials, trusted issuers and token checks, principals, roles, groups, grants by origin, delegations, account links, extraction sessions, the settings in SPEC §13.9.
+6. Capture and direct reads under the read rule (SPEC §13.3): dedupe, reference checks and errors reveal nothing hidden. Done with step 4: reads by id, reference checks, dedupe, taken ids, and references to hidden records removed from what is returned.
+7. Recall under the read rule: one permission snapshot from candidates to response, hidden references removed from returned records, use kept per principal. Released only when two stores that differ only in records a principal may not read give that principal identical answers, and when a benchmark with thousands of buckets holds. In place with step 4: the read rule in every candidate query, walk and count, hidden references removed, use per principal, and the identical answers test. Left: the benchmark.
+8. `cmd/memoryd` and the HTTP API, with its own Postgres (pgvector) in a compose file.
+9. `embed` and the semantic source, under the same read rule.
+10. First connector and client: SourceAnt as a trusted issuer, a GitHub connector (one bucket per repository, collaborators synced as readers, records it cannot place in quarantine), the client and backfill.
+
+What recall answers at the end of step 10: SPEC §12.1, the `relevance` (lexical and semantic), `cue` and `recency` signals of §12.2, §12.4, §12.6 and §12.7, reading contradiction links that exist and the principal may read. Not yet: spreading (§12.3), the `importance`, `affect`, `authority` and `validity` signals, detecting contradictions, and the questions in §12.5 that need them.
+
+Later: `conformance` fixtures and the questions in SPEC §12.5, `spread`, `maintain`, publishing and the rest of SPEC §13.10.
+
+Each step ships something that can be tested on its own.

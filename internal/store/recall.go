@@ -36,6 +36,9 @@ type Scope struct {
 	// UsedBy counts only uses of a memory made at or before it. Nil counts
 	// all.
 	UsedBy *time.Time
+	// Buckets keeps records in these buckets. Empty allows every bucket the
+	// access may read; it never adds one it may not.
+	Buckets []string
 }
 
 // Scored is a record and how well it matched, higher is better. Scores
@@ -72,24 +75,26 @@ type Found struct {
 }
 
 // Recaller is what recall asks of a store. It finds and describes
-// candidates; ranking them is recall's job.
+// candidates; ranking them is recall's job. Nothing the access may not read
+// is found, counted, walked through or returned.
 type Recaller interface {
 	// Text is records whose words match, best text match first.
-	Text(ctx context.Context, scope Scope, text string, limit int) ([]Scored, error)
+	Text(ctx context.Context, access Access, scope Scope, text string, limit int) ([]Scored, error)
 	// Ancestors is each entity and every parent above it, the entity itself
 	// at depth 0.
-	Ancestors(ctx context.Context, ids []string) (map[string][]Hop, error)
+	Ancestors(ctx context.Context, access Access, ids []string) (map[string][]Hop, error)
 	// Frequency is how many records in scope involve each cue or something
 	// under it, and how many records are in scope at all.
-	Frequency(ctx context.Context, scope Scope, cues []string) (map[string]int, int, error)
+	Frequency(ctx context.Context, access Access, scope Scope, cues []string) (map[string]int, int, error)
 	// Touches is how records involve the cues. With only set, it reports on
 	// those records. Without, it picks up to limit records that share the
 	// most distinct cues.
-	Touches(ctx context.Context, scope Scope, cues []string, only []Ref, limit int) ([]Touch, error)
+	Touches(ctx context.Context, access Access, scope Scope, cues []string, only []Ref, limit int) ([]Touch, error)
 	// Records reads candidates as they stood in scope.
-	Records(ctx context.Context, scope Scope, refs []Ref) ([]Found, error)
+	Records(ctx context.Context, access Access, scope Scope, refs []Ref) ([]Found, error)
 	// Entities reads entities by id. Ids nothing has are left out.
-	Entities(ctx context.Context, ids []string) (map[string]record.Entity, error)
-	// Rehearse counts a use of each current memory.
-	Rehearse(ctx context.Context, memories []string, at time.Time) error
+	Entities(ctx context.Context, access Access, ids []string) (map[string]record.Entity, error)
+	// Rehearse counts a use of each current memory by the access's
+	// principal.
+	Rehearse(ctx context.Context, access Access, memories []string, at time.Time) error
 }

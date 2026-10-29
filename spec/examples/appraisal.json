@@ -1,4 +1,5 @@
 {
+  "bucket": "bk_shop",
   "id": "ap_1",
   "target": "ev_01J",
   "by": "ac_extractor_model",

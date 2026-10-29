@@ -72,7 +72,7 @@ func (s *Service) now() time.Time {
 
 // Recall answers a request, or returns record.Problems when it cannot be
 // answered as asked.
-func (s *Service) Recall(ctx context.Context, req Request) (Response, error) {
+func (s *Service) Recall(ctx context.Context, access store.Access, req Request) (Response, error) {
 	if problems := req.Validate(); len(problems) > 0 {
 		return Response{}, problems
 	}
@@ -92,7 +92,7 @@ func (s *Service) Recall(ctx context.Context, req Request) (Response, error) {
 	scope := s.scope(req, now)
 	scope.UsedBy = &at
 
-	textRefs, err := s.Store.Text(ctx, scope, req.Context.Text, pool)
+	textRefs, err := s.Store.Text(ctx, access, scope, req.Context.Text, pool)
 	if err != nil {
 		return Response{}, err
 	}
@@ -100,7 +100,7 @@ func (s *Service) Recall(ctx context.Context, req Request) (Response, error) {
 	// The context's cues reach upward: a thread in the context also shares
 	// its pull request with records elsewhere on it.
 	cues := req.cues()
-	ancestors, err := s.Store.Ancestors(ctx, cues)
+	ancestors, err := s.Store.Ancestors(ctx, access, cues)
 	if err != nil {
 		return Response{}, err
 	}
@@ -119,7 +119,7 @@ func (s *Service) Recall(ctx context.Context, req Request) (Response, error) {
 		reach = append(reach, x)
 	}
 	sort.Strings(reach)
-	freq, total, err := s.Store.Frequency(ctx, scope, reach)
+	freq, total, err := s.Store.Frequency(ctx, access, scope, reach)
 	if err != nil {
 		return Response{}, err
 	}
@@ -138,7 +138,7 @@ func (s *Service) Recall(ctx context.Context, req Request) (Response, error) {
 	if len(finding) == 0 {
 		finding = present
 	}
-	cueTouches, err := s.Store.Touches(ctx, scope, finding, nil, pool)
+	cueTouches, err := s.Store.Touches(ctx, access, scope, finding, nil, pool)
 	if err != nil {
 		return Response{}, err
 	}
@@ -161,11 +161,11 @@ func (s *Service) Recall(ctx context.Context, req Request) (Response, error) {
 		return Response{Results: []Result{}}, nil
 	}
 
-	touches, err := s.Store.Touches(ctx, scope, present, candidates, 0)
+	touches, err := s.Store.Touches(ctx, access, scope, present, candidates, 0)
 	if err != nil {
 		return Response{}, err
 	}
-	found, err := s.Store.Records(ctx, scope, candidates)
+	found, err := s.Store.Records(ctx, access, scope, candidates)
 	if err != nil {
 		return Response{}, err
 	}
@@ -262,7 +262,7 @@ func (s *Service) Recall(ctx context.Context, req Request) (Response, error) {
 		results = results[:limit]
 	}
 	if req.Explain || req.Expand.Evidence {
-		if err := s.quote(ctx, scope, results); err != nil {
+		if err := s.quote(ctx, access, scope, results); err != nil {
 			return Response{}, err
 		}
 	}
@@ -271,8 +271,8 @@ func (s *Service) Recall(ctx context.Context, req Request) (Response, error) {
 
 // Use records that results were useful, which keeps them fresher in later
 // recalls. Browsing must not call it.
-func (s *Service) Use(ctx context.Context, memories []string) error {
-	return s.Store.Rehearse(ctx, memories, s.now())
+func (s *Service) Use(ctx context.Context, access store.Access, memories []string) error {
+	return s.Store.Rehearse(ctx, access, memories, s.now())
 }
 
 func (s *Service) scope(req Request, now time.Time) store.Scope {
@@ -289,6 +289,7 @@ func (s *Service) scope(req Request, now time.Time) store.Scope {
 		scope.ValidAt = &now
 	}
 	scope.Types = req.Filters.Types
+	scope.Buckets = req.Filters.Buckets
 	if o := req.Filters.Occurred; o != nil {
 		if o.From != nil {
 			scope.OccurredFrom = &o.From.At
@@ -342,7 +343,7 @@ func path(steps ...string) []string {
 
 // quote attaches the events behind each memory, with what was said there
 // and where.
-func (s *Service) quote(ctx context.Context, scope store.Scope, results []Result) error {
+func (s *Service) quote(ctx context.Context, access store.Access, scope store.Scope, results []Result) error {
 	var refs []store.Ref
 	for _, r := range results {
 		if m, ok := r.Record.(*record.Memory); ok {
@@ -354,8 +355,9 @@ func (s *Service) quote(ctx context.Context, scope store.Scope, results []Result
 	if len(refs) == 0 {
 		return nil
 	}
-	// Evidence is shown whatever its type; only the store's clock limits it.
-	found, err := s.Store.Records(ctx, store.Scope{AsOf: scope.AsOf}, refs)
+	// Evidence is shown whatever its type or bucket filter; only the store's
+	// clock and what the access may read limit it.
+	found, err := s.Store.Records(ctx, access, store.Scope{AsOf: scope.AsOf}, refs)
 	if err != nil {
 		return err
 	}
@@ -367,7 +369,7 @@ func (s *Service) quote(ctx context.Context, scope store.Scope, results []Result
 			places = append(places, f.Event.Place)
 		}
 	}
-	ancestors, err := s.Store.Ancestors(ctx, places)
+	ancestors, err := s.Store.Ancestors(ctx, access, places)
 	if err != nil {
 		return err
 	}
@@ -377,7 +379,7 @@ func (s *Service) quote(ctx context.Context, scope store.Scope, results []Result
 			named = append(named, h.Entity)
 		}
 	}
-	entities, err := s.Store.Entities(ctx, named)
+	entities, err := s.Store.Entities(ctx, access, named)
 	if err != nil {
 		return err
 	}

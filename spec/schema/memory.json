@@ -3,8 +3,9 @@
   "$id": "https://schema.trailpad.ai/memory/0.1/memory.json",
   "title": "Memory",
   "type": "object",
-  "required": ["id", "type", "statement"],
+  "required": ["bucket", "id", "type", "statement"],
   "properties": {
+    "bucket": { "$ref": "common.json#/$defs/id" },
     "id": { "$ref": "common.json#/$defs/id" },
     "type": { "$ref": "common.json#/$defs/type" },
     "statement": { "type": "string", "minLength": 1 },
@@ -21,6 +22,18 @@
           "event": { "$ref": "common.json#/$defs/id" },
           "role": { "enum": ["established", "reinforced", "refined", "contradicted", "retired"] }
         }
+      }
+    },
+    "depends_on": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["record"],
+        "properties": {
+          "record": { "$ref": "common.json#/$defs/id" },
+          "version": { "type": "integer", "minimum": 1 }
+        },
+        "additionalProperties": false
       }
     },
     "subjects": { "$ref": "common.json#/$defs/subjects" },

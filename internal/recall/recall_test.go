@@ -26,6 +26,11 @@ type world struct {
 	capture *capture.Capture
 	recall  *recall.Service
 	store   *postgres.Store
+	access  store.Access
+}
+
+func (w world) ingest(ctx context.Context, b store.Batch) (store.Written, error) {
+	return w.capture.Ingest(ctx, w.access, pgtest.InBucket(b, "bk_team"))
 }
 
 func at(s string) *record.Instant {
@@ -131,8 +136,9 @@ func setup(t *testing.T) world {
 		capture: &capture.Capture{Store: s, Profiles: profiles},
 		recall:  &recall.Service{Store: s, Profiles: profiles, Now: func() time.Time { return now }},
 		store:   s,
+		access:  pgtest.Workspace(t, s, "ws_test", "pr_test", "bk_team"),
 	}
-	if _, err := w.capture.Ingest(context.Background(), team()); err != nil {
+	if _, err := w.ingest(context.Background(), team()); err != nil {
 		t.Fatal(err)
 	}
 	return w
@@ -145,7 +151,7 @@ func (w world) ask(t *testing.T, request string) recall.Response {
 	if err := json.Unmarshal([]byte(request), &req); err != nil {
 		t.Fatal(err)
 	}
-	res, err := w.recall.Recall(context.Background(), req)
+	res, err := w.recall.Recall(context.Background(), w.access, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +271,7 @@ func TestAsOfAnswersAsTheStoreStoodThen(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	changed := team().Memories[0]
 	changed.Statement = "Retries to the payment gateway stop after two attempts."
-	if _, err := w.capture.Ingest(ctx, store.Batch{Memories: []record.Memory{changed}}); err != nil {
+	if _, err := w.ingest(ctx, store.Batch{Memories: []record.Memory{changed}}); err != nil {
 		t.Fatal(err)
 	}
 	statement := func(res recall.Response) string {
@@ -311,7 +317,7 @@ func TestUsingAMemoryKeepsItFresh(t *testing.T) {
 		return find(t, w.ask(t, `{"context": {"subjects": ["sb_retry_go"]}, "explain": true}`), "mm_retry").Because.Recency
 	}
 	before := recency()
-	if err := w.recall.Use(context.Background(), []string{"mm_retry"}); err != nil {
+	if err := w.recall.Use(context.Background(), w.access, []string{"mm_retry"}); err != nil {
 		t.Fatal(err)
 	}
 	after := recency()
@@ -357,7 +363,7 @@ func TestRequestsItCannotHonourAreRefused(t *testing.T) {
 		"weights": {"importance": 1},
 		"limit": 1000
 	}`), &req)
-	_, err := w.recall.Recall(context.Background(), req)
+	_, err := w.recall.Recall(context.Background(), w.access, req)
 	var problems record.Problems
 	if !errors.As(err, &problems) {
 		t.Fatalf("want problems, got %v", err)
@@ -375,7 +381,7 @@ func TestRequestsItCannotHonourAreRefused(t *testing.T) {
 
 func TestLoadingKeepsToTheScope(t *testing.T) {
 	w := setup(t)
-	found, err := w.store.Records(context.Background(), store.Scope{Types: []record.Type{"constraint"}},
+	found, err := w.store.Records(context.Background(), w.access, store.Scope{Types: []record.Type{"constraint"}},
 		[]store.Ref{{Kind: store.MemoryKind, ID: "mm_tabs"}, {Kind: store.MemoryKind, ID: "mm_retry"}})
 	if err != nil {
 		t.Fatal(err)
@@ -418,7 +424,7 @@ func TestLaterUsesDoNotChangeAnEarlierAnswer(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	request := `{"context": {"subjects": ["sb_retry_go"]}, "as_of": ` + string(before) + `, "explain": true}`
 	first := find(t, w.ask(t, request), "mm_retry")
-	if err := w.recall.Use(context.Background(), []string{"mm_retry"}); err != nil {
+	if err := w.recall.Use(context.Background(), w.access, []string{"mm_retry"}); err != nil {
 		t.Fatal(err)
 	}
 	again := find(t, w.ask(t, request), "mm_retry")
@@ -469,7 +475,7 @@ func TestWeightsMustAddUpToSomething(t *testing.T) {
 	} {
 		var req recall.Request
 		_ = json.Unmarshal([]byte(request), &req)
-		_, err := w.recall.Recall(context.Background(), req)
+		_, err := w.recall.Recall(context.Background(), w.access, req)
 		var problems record.Problems
 		if !errors.As(err, &problems) || !slices.ContainsFunc(problems, func(p record.Problem) bool { return p.Field == field }) {
 			t.Errorf("%s: want a problem on %s, got %v", request, field, err)
@@ -481,7 +487,7 @@ func TestAnEarlierUseCountsWhenALaterOneDoesNot(t *testing.T) {
 	w := setup(t)
 	ctx := context.Background()
 	for _, day := range []time.Time{time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)} {
-		if err := w.store.Rehearse(ctx, []string{"mm_retry"}, day); err != nil {
+		if err := w.store.Rehearse(ctx, w.access, []string{"mm_retry"}, day); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -508,7 +514,7 @@ func TestAFallbackChainCanCrossProfiles(t *testing.T) {
 	if err := w.recall.Profiles.Add(sales); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.capture.Ingest(context.Background(), store.Batch{Memories: []record.Memory{{
+	if _, err := w.ingest(context.Background(), store.Batch{Memories: []record.Memory{{
 		ID: "mm_rule", Type: "sales.rule", Profiles: []string{"crm@1", "sales@1"}, Statement: "Never discount gateway pricing.",
 	}}}); err != nil {
 		t.Fatal(err)
@@ -540,7 +546,7 @@ func TestRejectedTypesNeverCrowdOutAMatch(t *testing.T) {
 		crowd = append(crowd, record.Memory{ID: fmt.Sprintf("mm_crowd_%02d", i), Type: "crm.objection", Profiles: []string{"crm@2"},
 			Statement: "Gateway pricing gateway pricing gateway pricing."})
 	}
-	if _, err := w.capture.Ingest(context.Background(), store.Batch{Memories: crowd}); err != nil {
+	if _, err := w.ingest(context.Background(), store.Batch{Memories: crowd}); err != nil {
 		t.Fatal(err)
 	}
 	if got := ids(w.ask(t, `{"context": {"text": "gateway pricing"}, "filters": {"types": ["fact"]}}`)); !slices.Equal(got, []string{"mm_objection"}) {
@@ -558,13 +564,13 @@ func TestCapturingAgainRepairsAnOlderTypeChain(t *testing.T) {
 	if got := ids(w.ask(t, `{"context": {"text": "gateway pricing"}, "filters": {"types": ["fact"]}}`)); slices.Contains(got, "mm_objection") {
 		t.Fatalf("with only its namespace parents, it is not yet a fact, got %v", got)
 	}
-	if _, err := w.store.Write(ctx, store.Batch{Memories: []record.Memory{objection}}); err != nil {
+	if _, err := w.store.Write(ctx, w.access, pgtest.InBucket(store.Batch{Memories: []record.Memory{objection}}, "bk_team")); err != nil {
 		t.Fatal(err)
 	}
 	if got := ids(w.ask(t, `{"context": {"text": "gateway pricing"}, "filters": {"types": ["fact"]}}`)); slices.Contains(got, "mm_objection") {
 		t.Fatalf("a write without a chain leaves the stored one alone, got %v", got)
 	}
-	written, err := w.capture.Ingest(ctx, store.Batch{Memories: []record.Memory{objection}})
+	written, err := w.ingest(ctx, store.Batch{Memories: []record.Memory{objection}})
 	if err != nil {
 		t.Fatal(err)
 	}

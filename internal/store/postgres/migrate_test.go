@@ -24,7 +24,7 @@ func TestMigrationsGoDownAndBackUp(t *testing.T) {
 	s := pgtest.ForTest(t)
 	ctx := context.Background()
 	// Each migration in turn, latest first, with a table it adds.
-	for _, table := range []string{"workspaces", "rehearsals", "record_ids"} {
+	for _, table := range []string{"principals", "workspaces", "rehearsals", "record_ids"} {
 		if err := s.Rollback(ctx); err != nil {
 			t.Fatalf("rolling back %s: %v", table, err)
 		}
@@ -35,7 +35,7 @@ func TestMigrationsGoDownAndBackUp(t *testing.T) {
 	if err := s.Migrate(ctx); err != nil {
 		t.Fatalf("up again: %v", err)
 	}
-	for _, table := range []string{"record_ids", "rehearsals", "workspaces", "dependencies"} {
+	for _, table := range []string{"record_ids", "rehearsals", "workspaces", "dependencies", "principals", "grants"} {
 		if !exists(t, s, table) {
 			t.Fatalf("%s is missing after migrating again", table)
 		}
@@ -48,7 +48,7 @@ func legacy(t *testing.T) *postgres.Store {
 	t.Helper()
 	s := pgtest.ForTest(t)
 	ctx := context.Background()
-	for range 2 {
+	for range 3 {
 		if err := s.Rollback(ctx); err != nil {
 			t.Fatal(err)
 		}

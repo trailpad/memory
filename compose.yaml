@@ -1,0 +1,26 @@
+services:
+  memoryd:
+    build: .
+    environment:
+      MEMORY_DATABASE_URL: postgres://memory:memory@db:5432/memory?sslmode=disable
+    ports:
+      - "8090:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: memory
+      POSTGRES_PASSWORD: memory
+      POSTGRES_DB: memory
+    volumes:
+      - memory-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U memory"]
+      interval: 2s
+      retries: 30
+
+volumes:
+  memory-data:

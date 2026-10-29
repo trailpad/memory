@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schema.trailpad.ai/memory/0.1/link.json",
+  "title": "Link",
+  "type": "object",
+  "required": ["id", "from", "type", "to"],
+  "properties": {
+    "id": { "$ref": "common.json#/$defs/id" },
+    "from": { "$ref": "common.json#/$defs/id" },
+    "type": { "$ref": "common.json#/$defs/type" },
+    "to": { "$ref": "common.json#/$defs/id" },
+    "at": { "$ref": "common.json#/$defs/instant" },
+    "source": { "$ref": "common.json#/$defs/source" }
+  }
+}

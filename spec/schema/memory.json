@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schema.trailpad.ai/memory/0.1/memory.json",
+  "title": "Memory",
+  "type": "object",
+  "required": ["id", "type", "statement"],
+  "properties": {
+    "id": { "$ref": "common.json#/$defs/id" },
+    "type": { "$ref": "common.json#/$defs/type" },
+    "statement": { "type": "string", "minLength": 1 },
+    "why": { "type": "string" },
+    "valid_from": { "$ref": "common.json#/$defs/maybe_instant" },
+    "valid_until": { "$ref": "common.json#/$defs/maybe_instant" },
+    "confidence": { "$ref": "common.json#/$defs/unit" },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["event", "role"],
+        "properties": {
+          "event": { "$ref": "common.json#/$defs/id" },
+          "role": { "enum": ["established", "reinforced", "refined", "contradicted", "retired"] }
+        }
+      }
+    },
+    "subjects": { "$ref": "common.json#/$defs/subjects" },
+    "participants": { "$ref": "common.json#/$defs/participants" },
+    "involves": { "$ref": "common.json#/$defs/involves" },
+    "appraisals": { "$ref": "common.json#/$defs/ids" },
+    "recall": {
+      "type": "object",
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "last_at": { "$ref": "common.json#/$defs/instant" }
+      }
+    },
+    "attributes": { "$ref": "common.json#/$defs/attributes" },
+    "profiles": { "$ref": "common.json#/$defs/profiles" },
+    "source": { "$ref": "common.json#/$defs/source" }
+  }
+}

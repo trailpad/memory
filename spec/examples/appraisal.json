@@ -1,0 +1,13 @@
+{
+  "id": "ap_1",
+  "target": "ev_01J",
+  "by": "ac_extractor_model",
+  "at": "2026-04-19T14:05:00Z",
+  "valence": -1,
+  "intensity": 4,
+  "importance": 5,
+  "surprise": 3,
+  "dimensions": { "crm.risk": 4 },
+  "confidence": 0.7,
+  "method": "model"
+}

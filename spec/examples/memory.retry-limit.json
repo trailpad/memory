@@ -1,0 +1,18 @@
+{
+  "id": "mm_retry_limit",
+  "type": "constraint",
+  "statement": "Retries to the payment gateway stop after three attempts.",
+  "why": "The gateway bans a client after five failed calls in a minute.",
+  "valid_from": "2026-04-19T14:02:11Z",
+  "valid_until": null,
+  "confidence": 0.9,
+  "evidence": [
+    { "event": "ev_01J", "role": "established" },
+    { "event": "ev_02K", "role": "reinforced" }
+  ],
+  "subjects": [{ "subject": "sb_file_retry_go", "role": "about" }],
+  "participants": [{ "actor": "ac_ana", "role": "decider" }],
+  "appraisals": ["ap_2"],
+  "recall": { "count": 12, "last_at": "2026-10-20T09:00:00Z" },
+  "source": { "system": "memory", "method": "extracted", "recorded_at": "2026-04-19T14:06:00Z", "by": "ac_extractor_model" }
+}

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schema.trailpad.ai/memory/0.1/appraisal.json",
+  "title": "Appraisal",
+  "type": "object",
+  "required": ["id", "target", "by"],
+  "properties": {
+    "id": { "$ref": "common.json#/$defs/id" },
+    "target": { "$ref": "common.json#/$defs/id" },
+    "by": { "$ref": "common.json#/$defs/id" },
+    "at": { "$ref": "common.json#/$defs/instant" },
+    "valence": { "type": "integer", "minimum": -2, "maximum": 2 },
+    "intensity": { "type": "integer", "minimum": 1, "maximum": 5 },
+    "importance": { "type": "integer", "minimum": 1, "maximum": 5 },
+    "surprise": { "type": "integer", "minimum": 1, "maximum": 5 },
+    "dimensions": {
+      "type": "object",
+      "propertyNames": { "$ref": "common.json#/$defs/namespaced" },
+      "additionalProperties": { "type": "integer" }
+    },
+    "confidence": { "$ref": "common.json#/$defs/unit" },
+    "method": { "type": "string" },
+    "source": { "$ref": "common.json#/$defs/source" }
+  },
+  "anyOf": [
+    { "required": ["valence"] },
+    { "required": ["intensity"] },
+    { "required": ["importance"] },
+    { "required": ["surprise"] },
+    { "required": ["dimensions"], "properties": { "dimensions": { "minProperties": 1 } } }
+  ]
+}

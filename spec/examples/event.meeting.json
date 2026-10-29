@@ -1,0 +1,15 @@
+{
+  "id": "ev_meeting_0421",
+  "type": "meeting",
+  "occurred_at": "2026-04-21T09:00:00Z",
+  "ended_at": "2026-04-21T09:45:00Z",
+  "place": "pl_payments_weekly",
+  "participants": [
+    { "actor": "ac_ana", "role": "decider" },
+    { "actor": "ac_ben", "role": "present" }
+  ],
+  "involves": [{ "entity": "en_deal_884", "role": "crm.at_stake" }],
+  "attributes": { "meeting.agenda_items": 4 },
+  "profiles": ["crm@1"],
+  "source": { "system": "notes", "method": "manual", "recorded_at": { "at": "2026-04-21T00:00:00Z", "precision": "day" } }
+}

@@ -1,0 +1,53 @@
+{
+  "profile": "core",
+  "version": "1",
+  "entity_types": [
+    { "type": "person", "class": "actor", "icon": "person" },
+    { "type": "team", "class": "actor", "icon": "people" },
+    { "type": "agent", "class": "actor", "icon": "sparkle" },
+    { "type": "bot", "class": "actor", "icon": "robot" },
+    { "type": "organisation", "class": "actor", "icon": "building" },
+    { "type": "meeting", "class": "place", "icon": "calendar", "medium": { "sync": true, "record": "transcribed" } },
+    { "type": "topic", "class": "subject", "icon": "tag" }
+  ],
+  "event_types": [
+    { "type": "meeting", "icon": "calendar", "medium": { "sync": true, "record": "transcribed" } },
+    { "type": "meeting.utterance", "icon": "speech" }
+  ],
+  "memory_types": [
+    { "type": "decision", "half_life_days": 365 },
+    { "type": "constraint", "half_life_days": 540 },
+    { "type": "convention", "half_life_days": 730 },
+    { "type": "lesson", "half_life_days": 365 },
+    { "type": "preference", "half_life_days": 180 },
+    { "type": "fact", "half_life_days": 365 },
+    { "type": "intent", "half_life_days": 270 },
+    { "type": "commitment", "half_life_days": 90 }
+  ],
+  "roles": [
+    { "role": "decider", "cue_weight": 1.0 },
+    { "role": "approver", "cue_weight": 0.9 },
+    { "role": "author", "cue_weight": 0.85 },
+    { "role": "speaker", "cue_weight": 0.8 },
+    { "role": "about", "cue_weight": 0.8 },
+    { "role": "reviewer", "cue_weight": 0.7 },
+    { "role": "assignee", "cue_weight": 0.7 },
+    { "role": "affected", "cue_weight": 0.6 },
+    { "role": "addressee", "cue_weight": 0.5 },
+    { "role": "present", "cue_weight": 0.4 },
+    { "role": "observer", "cue_weight": 0.25 },
+    { "role": "mentioned", "cue_weight": 0.2 }
+  ],
+  "links": [
+    { "type": "supersedes", "from": "memory", "to": "memory" },
+    { "type": "refines", "from": "memory", "to": "memory" },
+    { "type": "contradicts", "from": "memory", "to": "memory" },
+    { "type": "depends_on", "from": "memory", "to": "memory" },
+    { "type": "example_of", "from": "memory", "to": "memory" },
+    { "type": "in_reply_to", "from": "event", "to": "event" },
+    { "type": "part_of", "from": "event", "to": "event" },
+    { "type": "follows", "from": "event", "to": "event" },
+    { "type": "caused", "from": "event", "to": "event" },
+    { "type": "duplicates", "from": "event", "to": "event" }
+  ]
+}

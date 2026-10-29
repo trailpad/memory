@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schema.trailpad.ai/memory/0.1/profile.json",
+  "title": "Profile",
+  "type": "object",
+  "required": ["profile", "version"],
+  "properties": {
+    "profile": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+    "version": { "type": "string", "pattern": "^[0-9]+$" },
+    "entity_types": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": { "$ref": "common.json#/$defs/type" },
+          "class": { "enum": ["place", "actor", "subject"] },
+          "parent_type": { "$ref": "common.json#/$defs/type" },
+          "falls_back_to": { "$ref": "common.json#/$defs/type" },
+          "icon": { "type": "string" },
+          "medium": { "$ref": "#/$defs/medium" }
+        }
+      }
+    },
+    "event_types": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": { "$ref": "common.json#/$defs/type" },
+          "falls_back_to": { "$ref": "common.json#/$defs/type" },
+          "icon": { "type": "string" },
+          "medium": { "$ref": "#/$defs/medium" }
+        }
+      }
+    },
+    "memory_types": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": { "$ref": "common.json#/$defs/type" },
+          "falls_back_to": { "$ref": "common.json#/$defs/type" },
+          "half_life_days": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    "roles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["role", "cue_weight"],
+        "properties": {
+          "role": { "$ref": "common.json#/$defs/type" },
+          "cue_weight": { "$ref": "common.json#/$defs/unit" }
+        }
+      }
+    },
+    "attributes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key"],
+        "properties": {
+          "key": { "$ref": "common.json#/$defs/namespaced" },
+          "schema": { "type": ["object", "boolean"] },
+          "filterable": { "type": "boolean" }
+        }
+      }
+    },
+    "appraisals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["dimension", "scale"],
+        "properties": {
+          "dimension": { "$ref": "common.json#/$defs/namespaced" },
+          "scale": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 }
+        }
+      }
+    },
+    "links": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "from", "to"],
+        "properties": {
+          "type": { "$ref": "common.json#/$defs/type" },
+          "from": { "enum": ["memory", "event", "entity"] },
+          "to": { "enum": ["memory", "event", "entity"] }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "medium": {
+      "type": "object",
+      "properties": {
+        "sync": { "type": "boolean" },
+        "formality": { "enum": ["casual", "work", "formal", "binding"] },
+        "record": { "enum": ["written", "transcribed", "recalled"] }
+      }
+    }
+  }
+}

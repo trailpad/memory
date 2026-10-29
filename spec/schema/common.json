@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schema.trailpad.ai/memory/0.1/common.json",
+  "title": "Shared definitions",
+  "$defs": {
+    "id": { "type": "string", "minLength": 1 },
+    "type": { "type": "string", "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+)*$" },
+    "namespaced": { "type": "string", "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+)+$" },
+    "time": { "type": "string", "format": "date-time" },
+    "instant": {
+      "oneOf": [
+        { "$ref": "#/$defs/time" },
+        {
+          "type": "object",
+          "required": ["at"],
+          "properties": {
+            "at": { "$ref": "#/$defs/time" },
+            "precision": { "enum": ["second", "minute", "day", "month", "year"] }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "maybe_instant": { "oneOf": [{ "$ref": "#/$defs/instant" }, { "type": "null" }] },
+    "unit": { "type": "number", "minimum": 0, "maximum": 1 },
+    "source": {
+      "type": "object",
+      "properties": {
+        "system": { "type": "string" },
+        "native_id": { "type": "string" },
+        "url": { "type": "string" },
+        "recorded_at": { "$ref": "#/$defs/instant" },
+        "method": { "type": "string" },
+        "by": { "type": "string" }
+      }
+    },
+    "attributes": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/namespaced" }
+    },
+    "profiles": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9_]+@[0-9]+$" } },
+    "participants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["actor", "role"],
+        "properties": { "actor": { "$ref": "#/$defs/id" }, "role": { "$ref": "#/$defs/type" } }
+      }
+    },
+    "subjects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["subject", "role"],
+        "properties": { "subject": { "$ref": "#/$defs/id" }, "role": { "$ref": "#/$defs/type" } }
+      }
+    },
+    "involves": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["entity", "role"],
+        "properties": { "entity": { "$ref": "#/$defs/id" }, "role": { "$ref": "#/$defs/type" } }
+      }
+    },
+    "ids": { "type": "array", "items": { "$ref": "#/$defs/id" } }
+  }
+}

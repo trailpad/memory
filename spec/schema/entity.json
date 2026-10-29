@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schema.trailpad.ai/memory/0.1/entity.json",
+  "title": "Entity: a place, actor, subject or a kind a profile declares",
+  "type": "object",
+  "required": ["id", "type"],
+  "properties": {
+    "id": { "$ref": "common.json#/$defs/id" },
+    "class": { "enum": ["place", "actor", "subject"] },
+    "type": { "$ref": "common.json#/$defs/type" },
+    "name": { "type": "string" },
+    "parent": { "$ref": "common.json#/$defs/id" },
+    "url": { "type": "string" },
+    "audience": {
+      "type": "object",
+      "properties": {
+        "visibility": { "type": "string" },
+        "members": { "$ref": "common.json#/$defs/ids" }
+      }
+    },
+    "medium": {
+      "type": "object",
+      "properties": {
+        "sync": { "type": "boolean" },
+        "formality": { "enum": ["casual", "work", "formal", "binding"] },
+        "record": { "enum": ["written", "transcribed", "recalled"] }
+      }
+    },
+    "image": { "type": "string" },
+    "identities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["platform", "handle"],
+        "properties": { "platform": { "type": "string", "minLength": 1 }, "handle": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "member_of": { "$ref": "common.json#/$defs/ids" },
+    "attributes": { "$ref": "common.json#/$defs/attributes" },
+    "source": { "$ref": "common.json#/$defs/source" }
+  },
+  "if": { "not": { "required": ["class"] } },
+  "then": { "properties": { "type": { "$ref": "common.json#/$defs/namespaced" } } }
+}

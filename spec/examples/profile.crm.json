@@ -1,0 +1,19 @@
+{
+  "profile": "crm",
+  "version": "1",
+  "entity_types": [
+    { "type": "crm.account", "icon": "building" },
+    { "type": "crm.deal", "parent_type": "crm.account", "icon": "handshake" }
+  ],
+  "event_types": [
+    { "type": "crm.call", "falls_back_to": "meeting", "medium": { "sync": true, "record": "transcribed" } }
+  ],
+  "memory_types": [{ "type": "crm.objection", "falls_back_to": "fact", "half_life_days": 180 }],
+  "roles": [{ "role": "crm.buyer", "cue_weight": 0.9 }, { "role": "crm.at_stake", "cue_weight": 1.0 }],
+  "attributes": [
+    { "key": "crm.amount", "schema": { "type": "object", "properties": { "value": { "type": "number" }, "unit": { "type": "string" } } }, "filterable": true },
+    { "key": "crm.stage", "schema": { "enum": ["lead", "negotiation", "won", "lost"] }, "filterable": true }
+  ],
+  "appraisals": [{ "dimension": "crm.risk", "scale": [1, 5] }],
+  "links": [{ "type": "crm.blocks", "from": "memory", "to": "entity" }]
+}

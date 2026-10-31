@@ -59,12 +59,31 @@ type Written struct {
 	Unchanged []string `json:"unchanged,omitempty"`
 }
 
+// EventQuery picks events by when they happened. From is inclusive and To
+// exclusive. PartOf lists the parts of one event; TopLevel lists only events
+// that are part of nothing. Buckets narrows the listing to those buckets.
+// After continues a listing from the event with that id.
+type EventQuery struct {
+	From, To *time.Time
+	Buckets  []string
+	PartOf   string
+	TopLevel bool
+	After    string
+	Limit    int
+}
+
 // Store keeps records. Every method acts within one workspace and keeps to
 // what the access allows.
 type Store interface {
 	Write(ctx context.Context, access Access, batch Batch) (Written, error)
 	Entity(ctx context.Context, access Access, id string) (record.Entity, error)
 	Event(ctx context.Context, access Access, id string) (record.Event, error)
+	// Events lists the events in a span by when they happened, earliest
+	// first. Undated events are never listed.
+	Events(ctx context.Context, access Access, q EventQuery) ([]record.Event, error)
+	// Entities reads several entities at once, by id. Ids the access may not
+	// read are left out, exactly as ids nothing has.
+	Entities(ctx context.Context, access Access, ids []string) (map[string]record.Entity, error)
 	// Memory is the version current at asOf (the store's clock), or the
 	// current one when asOf is nil.
 	Memory(ctx context.Context, access Access, id string, asOf *time.Time) (record.Memory, error)

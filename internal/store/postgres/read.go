@@ -94,3 +94,47 @@ func (s *Store) Kinds(ctx context.Context, access store.Access, ids []string) (m
 	}
 	return out, rows.Err()
 }
+
+func (s *Store) Events(ctx context.Context, access store.Access, q store.EventQuery) ([]record.Event, error) {
+	access, err := s.live(ctx, access)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, `
+		select e.body from events e
+		where e.workspace_id = $1 and e.requires <@ $2 and e.occurred_at is not null
+		  and ($3::timestamptz is null or e.occurred_at >= $3)
+		  and ($4::timestamptz is null or e.occurred_at < $4)
+		  and ($5 = '' or e.part_of = $5)
+		  and (not $6 or e.part_of is null)
+		  and ($7 = '' or (e.occurred_at, e.id) > (
+		    select a.occurred_at, a.id from events a where a.workspace_id = $1 and a.id = $7))
+		  and (coalesce(cardinality($9::text[]), 0) = 0 or e.bucket_id = any($9))
+		order by e.occurred_at, e.id
+		limit $8`,
+		access.Workspace, access.Read, q.From, q.To, q.PartOf, q.TopLevel, q.After, q.Limit, q.Buckets)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []record.Event
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var e record.Event
+		if err := json.Unmarshal(raw, &e); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	listed := make([]*record.Event, len(out))
+	for i := range out {
+		listed[i] = &out[i]
+	}
+	return out, s.strip(ctx, access, nil, listed, nil)
+}

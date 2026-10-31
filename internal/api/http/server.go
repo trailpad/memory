@@ -7,8 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -55,6 +59,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.Handle("POST /v1/records", s.as(access.Write, s.write))
 	mux.Handle("GET /v1/entities/{id}", s.as(access.Read, s.entity))
+	mux.Handle("GET /v1/events", s.as(access.Read, s.events))
 	mux.Handle("GET /v1/events/{id}", s.as(access.Read, s.event))
 	mux.Handle("GET /v1/memories/{id}", s.as(access.Read, s.memory))
 	mux.Handle("POST /v1/recall", s.as(access.Read, s.recall))
@@ -111,6 +116,116 @@ func (s *Server) event(w http.ResponseWriter, r *http.Request, c access.Caller) 
 		return err
 	}
 	return reply(w, http.StatusOK, e)
+}
+
+// Event listings are paged: a full page names the event to continue after.
+const (
+	DefaultEventPage = 200
+	MaxEventPage     = 1000
+)
+
+func (s *Server) events(w http.ResponseWriter, r *http.Request, c access.Caller) error {
+	query := r.URL.Query()
+	q := store.EventQuery{PartOf: query.Get("part_of"), After: query.Get("after"), Buckets: query["bucket"], Limit: DefaultEventPage}
+	var problems record.Problems
+	at := func(field string) *time.Time {
+		v := query.Get(field)
+		if v == "" {
+			return nil
+		}
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			problems = append(problems, record.Problem{Field: field, Message: "must be an RFC 3339 time"})
+			return nil
+		}
+		return &t
+	}
+	q.From, q.To = at("from"), at("to")
+	if q.From != nil && q.To != nil && !q.From.Before(*q.To) {
+		problems = append(problems, record.Problem{Field: "to", Message: "must be after from"})
+	}
+	switch query.Get("top_level") {
+	case "", "false":
+	case "true":
+		q.TopLevel = true
+	default:
+		problems = append(problems, record.Problem{Field: "top_level", Message: "must be true or false"})
+	}
+	if q.TopLevel && q.PartOf != "" {
+		problems = append(problems, record.Problem{Field: "part_of", Message: "cannot be combined with top_level"})
+	}
+	if v := query.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > MaxEventPage {
+			problems = append(problems, record.Problem{Field: "limit", Message: fmt.Sprintf("must be from 1 to %d", MaxEventPage)})
+		}
+		q.Limit = n
+	}
+	if len(problems) > 0 {
+		return problems
+	}
+	events, err := s.Store.Events(r.Context(), c.Access, q)
+	if err != nil {
+		return err
+	}
+	entities, err := s.involved(r.Context(), c, events)
+	if err != nil {
+		return err
+	}
+	page := struct {
+		Events   []record.Event  `json:"events"`
+		Entities []record.Entity `json:"entities"`
+		Next     string          `json:"next,omitempty"`
+	}{Events: events, Entities: entities}
+	if page.Events == nil {
+		page.Events = []record.Event{}
+	}
+	if len(events) == q.Limit {
+		page.Next = events[len(events)-1].ID
+	}
+	return reply(w, http.StatusOK, page)
+}
+
+// involved is every entity the events name, and the places those sit in, so
+// a listing can be shown without a read per face and per place.
+func (s *Server) involved(ctx context.Context, c access.Caller, events []record.Event) ([]record.Entity, error) {
+	wanted := map[string]bool{}
+	for i := range events {
+		for _, ref := range events[i].Refs() {
+			switch ref.Target {
+			case record.TargetEntity, record.TargetPlace, record.TargetActor, record.TargetSubject:
+				wanted[*ref.ID] = true
+			}
+		}
+	}
+	var out []record.Entity
+	for range 2 {
+		ids := make([]string, 0, len(wanted))
+		for id, pending := range wanted {
+			if pending {
+				ids = append(ids, id)
+				wanted[id] = false
+			}
+		}
+		if len(ids) == 0 {
+			break
+		}
+		found, err := s.Store.Entities(ctx, c.Access, ids)
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range slices.Sorted(maps.Keys(found)) {
+			e := found[id]
+			out = append(out, e)
+			if _, seen := wanted[e.Parent]; e.Parent != "" && !seen {
+				wanted[e.Parent] = true
+			}
+		}
+	}
+	if out == nil {
+		out = []record.Entity{}
+	}
+	return out, nil
 }
 
 func (s *Server) memory(w http.ResponseWriter, r *http.Request, c access.Caller) error {

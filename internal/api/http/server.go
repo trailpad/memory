@@ -61,9 +61,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/entities/{id}", s.as(access.Read, s.entity))
 	mux.Handle("GET /v1/events", s.as(access.Read, s.events))
 	mux.Handle("GET /v1/events/{id}", s.as(access.Read, s.event))
-	mux.Handle("GET /v1/memories/{id}", s.as(access.Read, s.memory))
 	mux.Handle("POST /v1/recall", s.as(access.Read, s.recall))
-	mux.Handle("POST /v1/memories/use", s.as(access.Read, s.use))
+	mux.Handle("POST /v1/events/use", s.as(access.Read, s.use))
 	mux.Handle("PUT /v1/buckets", s.as(access.Sync, s.bindBucket))
 	mux.Handle("PUT /v1/buckets/{id}/readers", s.as(access.Sync, s.syncReaders))
 	return mux
@@ -228,22 +227,6 @@ func (s *Server) involved(ctx context.Context, c access.Caller, events []record.
 	return out, nil
 }
 
-func (s *Server) memory(w http.ResponseWriter, r *http.Request, c access.Caller) error {
-	var asOf *time.Time
-	if v := r.URL.Query().Get("as_of"); v != "" {
-		t, err := time.Parse(time.RFC3339, v)
-		if err != nil {
-			return record.Problems{{Field: "as_of", Message: "must be an RFC 3339 time"}}
-		}
-		asOf = &t
-	}
-	m, err := s.Store.Memory(r.Context(), c.Access, r.PathValue("id"), asOf)
-	if err != nil {
-		return err
-	}
-	return reply(w, http.StatusOK, m)
-}
-
 func (s *Server) recall(w http.ResponseWriter, r *http.Request, c access.Caller) error {
 	var req recall.Request
 	if err := decode(r, &req); err != nil {
@@ -258,12 +241,12 @@ func (s *Server) recall(w http.ResponseWriter, r *http.Request, c access.Caller)
 
 func (s *Server) use(w http.ResponseWriter, r *http.Request, c access.Caller) error {
 	var body struct {
-		Memories []string `json:"memories"`
+		Events []string `json:"events"`
 	}
 	if err := decode(r, &body); err != nil {
 		return err
 	}
-	if err := s.Recall.Use(r.Context(), c.Access, body.Memories); err != nil {
+	if err := s.Recall.Use(r.Context(), c.Access, body.Events); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -300,7 +283,9 @@ func (s *Server) syncReaders(w http.ResponseWriter, r *http.Request, c access.Ca
 }
 
 func decode(r *http.Request, v any) error {
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(v); err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
 			return errTooLarge

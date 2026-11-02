@@ -61,9 +61,6 @@ func TestTypesFallBack(t *testing.T) {
 	if got := r.EntityIcon("crm.deal"); got != "handshake" {
 		t.Fatalf("entity icon, got %q", got)
 	}
-	if !r.KnownMemoryType("crm.objection.pricing") || r.KnownMemoryType("legal.ruling") {
-		t.Fatal("known types are those declared or falling back to a declared one")
-	}
 }
 
 func TestAttributesFollowTheirProfile(t *testing.T) {
@@ -96,8 +93,8 @@ func TestJudgementsStayOnTheirScale(t *testing.T) {
 }
 
 func TestProfilesStayInTheirNamespace(t *testing.T) {
-	_, err := profile.Parse([]byte(`{"profile":"crm","version":"1","roles":[{"role":"buyer","cue_weight":0.9}],"memory_types":[{"type":"care.dose"}]}`))
-	if err == nil || !strings.Contains(err.Error(), "roles[0].role") || !strings.Contains(err.Error(), "memory_types[0].type") {
+	_, err := profile.Parse([]byte(`{"profile":"crm","version":"1","roles":[{"role":"buyer","cue_weight":0.9}],"event_types":[{"type":"care.dose"}]}`))
+	if err == nil || !strings.Contains(err.Error(), "roles[0].role") || !strings.Contains(err.Error(), "event_types[0].type") {
 		t.Fatalf("a profile may only add names under its own, got %v", err)
 	}
 }
@@ -142,7 +139,7 @@ func TestProfilesThatCannotBeLoaded(t *testing.T) {
 		"name with capitals":      `{"profile":"CRM","version":"1"}`,
 		"version that is a word":  `{"profile":"crm","version":"one"}`,
 		"weight above one":        `{"profile":"crm","version":"1","roles":[{"role":"crm.buyer","cue_weight":2}]}`,
-		"negative half life":      `{"profile":"crm","version":"1","memory_types":[{"type":"crm.note","half_life_days":-1}]}`,
+		"negative half life":      `{"profile":"crm","version":"1","event_types":[{"type":"crm.note","half_life_days":-1}]}`,
 		"upside down scale":       `{"profile":"crm","version":"1","appraisals":[{"dimension":"crm.risk","scale":[5,1]}]}`,
 		"attribute schema broken": `{"profile":"crm","version":"1","attributes":[{"key":"crm.stage","schema":{"type":"colour"}}]}`,
 		"not json":                `{"profile":`,

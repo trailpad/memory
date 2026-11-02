@@ -99,15 +99,6 @@ func (s *Store) write(ctx context.Context, access store.Access, given store.Batc
 			return out, fmt.Errorf("event %s: %w", e.ID, err)
 		}
 	}
-	for i, m := range b.Memories {
-		lineage, refresh := store.TypeLineage(given.Lineage.Memories, i, m.Type)
-		if err := w.memory(ctx, m, lineage, refresh); err != nil {
-			return out, fmt.Errorf("memory %s: %w", m.ID, err)
-		}
-	}
-	if err := w.dependencies(ctx); err != nil {
-		return out, err
-	}
 	for _, a := range b.Appraisals {
 		if err := w.appraisal(ctx, a); err != nil {
 			return out, fmt.Errorf("appraisal %s: %w", a.ID, err)
@@ -143,40 +134,6 @@ type writer struct {
 	givenIDs  map[string]bool
 	// requires is each batch record's requirement set, by stored id.
 	requires map[string][]string
-	// inputs is, for each batch memory, what it was made from with the
-	// version read.
-	inputs map[string][]input
-	// written is each memory version the batch added.
-	written []written
-}
-
-type written struct {
-	id      string
-	version int
-}
-
-// dependencies records what each new memory version was made from. It runs
-// once every memory in the batch is written, so one made from another in
-// the same batch names the version that other ended at.
-func (w *writer) dependencies(ctx context.Context) error {
-	for _, m := range w.written {
-		for _, in := range w.inputs[m.id] {
-			_, err := w.tx.Exec(ctx, `insert into dependencies (workspace_id, memory_id, version, input_id, input_version)
-				select $1, $2, $3, $4, case when $6 then (select version from memories
-					where workspace_id = $1 and id = $4 and superseded_at is null) else $5 end
-				on conflict do nothing`, w.ws, m.id, m.version, in.id, in.version, in.batch)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-type input struct {
-	id      string
-	version int
-	batch   bool
 }
 
 func (w *writer) id(given string) string {
@@ -208,9 +165,6 @@ func lockKeys(ws string, b *store.Batch) []string {
 	}
 	for _, e := range b.Events {
 		add(e.ID, "events", e.Source)
-	}
-	for _, m := range b.Memories {
-		add(m.ID, "memories", m.Source)
 	}
 	for _, a := range b.Appraisals {
 		add(a.ID, "appraisals", a.Source)
@@ -287,11 +241,6 @@ func (w *writer) resolve(ctx context.Context, b *store.Batch) error {
 			return err
 		}
 	}
-	for _, m := range b.Memories {
-		if err := find("memories", m.ID, m.Source, " and superseded_at is null"); err != nil {
-			return err
-		}
-	}
 	for _, a := range b.Appraisals {
 		if err := find("appraisals", a.ID, a.Source, ""); err != nil {
 			return err
@@ -320,9 +269,6 @@ func rewritten(b *store.Batch) error {
 	for i, e := range b.Events {
 		add(fmt.Sprintf("events[%d]", i), e.Validate())
 	}
-	for i, m := range b.Memories {
-		add(fmt.Sprintf("memories[%d]", i), m.Validate())
-	}
 	for i, a := range b.Appraisals {
 		add(fmt.Sprintf("appraisals[%d]", i), a.Validate())
 	}
@@ -344,9 +290,6 @@ func (w *writer) rewrite(b *store.Batch) {
 	}
 	for i := range b.Events {
 		fix(&b.Events[i].ID, b.Events[i].Refs())
-	}
-	for i := range b.Memories {
-		fix(&b.Memories[i].ID, b.Memories[i].Refs())
 	}
 	for i := range b.Appraisals {
 		fix(&b.Appraisals[i].ID, b.Appraisals[i].Refs())
@@ -540,12 +483,13 @@ func (w *writer) involve(ctx context.Context, kind, recordID string, version int
 // out, when there is one: it is derived from the record's profiles, not part
 // of the record, and rows stored before lineage was kept need repairing.
 func (w *writer) relineage(ctx context.Context, table, id string, lineage []record.Type) error {
-	_, err := w.tx.Exec(ctx, `update `+table+` set type_lineage = $3 where workspace_id = $1 and id = $2 and type_lineage is distinct from $3`+
-		map[string]string{"memories": ` and superseded_at is null`, "events": ``}[table], w.ws, id, types(lineage))
+	_, err := w.tx.Exec(ctx, `update `+table+` set type_lineage = $3 where workspace_id = $1 and id = $2 and type_lineage is distinct from $3`, w.ws, id, types(lineage))
 	return err
 }
 
 func (w *writer) event(ctx context.Context, e record.Event, lineage []record.Type, refresh bool) error {
+	e.Recall = nil
+	e.Appraisals = nil
 	if err := w.claim(ctx, e.ID, "event", ""); err != nil {
 		return err
 	}
@@ -570,7 +514,7 @@ func (w *writer) event(ctx context.Context, e record.Event, lineage []record.Typ
 		}
 		return nil
 	}
-	texts := make([]string, 0, len(e.Content))
+	texts := []string{e.Why}
 	for _, u := range e.Content {
 		texts = append(texts, u.Text)
 	}
@@ -582,71 +526,15 @@ func (w *writer) event(ctx context.Context, e record.Event, lineage []record.Typ
 	system, installation, native := source(e.Source)
 	_, err = w.tx.Exec(ctx, `
 		insert into events (workspace_id, id, bucket_id, requires, type, occurred_at, occurred_precision, ended_at, place_id,
-			part_of, in_reply_to, body, said, source_system, source_installation, source_native_id, recorded_at, type_lineage)
+			part_of, in_reply_to, body, said, source_system, source_installation, source_native_id, recorded_at, type_lineage, why)
 		values ($1, $2, $3, $4, $5, $6, $7, $8, nullif($9, ''), nullif($10, ''), nullif($11, ''), $12,
-			to_tsvector('english', $13), $14, $15, $16, $17, $18)`,
+			to_tsvector('english', $13), $14, $15, $16, $17, $18, $19)`,
 		w.ws, e.ID, e.Bucket, w.requires[e.ID], string(e.Type), at(e.OccurredAt), precision, at(e.EndedAt), e.Place,
-		e.PartOf, e.InReplyTo, body, strings.Join(texts, "\n"), system, installation, native, w.now, types(lineage))
+		e.PartOf, e.InReplyTo, body, strings.Join(texts, "\n"), system, installation, native, w.now, types(lineage), e.Why)
 	if err != nil {
 		return err
 	}
 	return w.involve(ctx, "event", e.ID, 0, e.Place, e.Participants, e.Subjects, e.Involves)
-}
-
-func (w *writer) memory(ctx context.Context, m record.Memory, lineage []record.Type, refresh bool) error {
-	if err := w.claim(ctx, m.ID, "memory", ""); err != nil {
-		return err
-	}
-	// How often a memory was used is the store's to count, never the writer's.
-	m.Recall = nil
-	body, err := json.Marshal(m)
-	if err != nil {
-		return err
-	}
-	if err := w.stays(ctx, "memories", m.ID, m.Bucket); err != nil {
-		return err
-	}
-	var version int
-	var same bool
-	err = w.tx.QueryRow(ctx, `select version, body = $3::jsonb and requires @> $4 and $4 @> requires from memories
-		where workspace_id = $1 and id = $2 and superseded_at is null`,
-		w.ws, m.ID, string(body), w.requires[m.ID]).Scan(&version, &same)
-	switch {
-	case err == nil && same:
-		w.unchanged(m.ID)
-		if refresh {
-			return w.relineage(ctx, "memories", m.ID, lineage)
-		}
-		return nil
-	case err == nil:
-		if _, err := w.tx.Exec(ctx, `update memories set superseded_at = $3 where workspace_id = $1 and id = $2 and superseded_at is null`,
-			w.ws, m.ID, w.now); err != nil {
-			return err
-		}
-	case !errors.Is(err, pgx.ErrNoRows):
-		return err
-	}
-
-	next := version + 1
-	system, installation, native := source(m.Source)
-	_, err = w.tx.Exec(ctx, `
-		insert into memories (workspace_id, id, version, bucket_id, requires, type, statement, why, valid_from, valid_until,
-			confidence, body, said, source_system, source_installation, source_native_id, recorded_at, type_lineage)
-		values ($1, $2, $3, $4, $5, $6, $7, nullif($8, ''), $9, $10, $11, $12, to_tsvector('english', $7 || ' ' || $8),
-			$13, $14, $15, $16, $17)`,
-		w.ws, m.ID, next, m.Bucket, w.requires[m.ID], string(m.Type), m.Statement, m.Why, at(m.ValidFrom), at(m.ValidUntil),
-		m.Confidence, body, system, installation, native, w.now, types(lineage))
-	if err != nil {
-		return err
-	}
-	for _, ev := range m.Evidence {
-		if _, err := w.tx.Exec(ctx, `insert into evidence (workspace_id, memory_id, version, event_id, role) values ($1, $2, $3, $4, $5)
-			on conflict do nothing`, w.ws, m.ID, next, ev.Event, string(ev.Role)); err != nil {
-			return err
-		}
-	}
-	w.written = append(w.written, written{id: m.ID, version: next})
-	return w.involve(ctx, "memory", m.ID, next, "", m.Participants, m.Subjects, m.Involves)
 }
 
 func (w *writer) appraisal(ctx context.Context, a record.Appraisal) error {

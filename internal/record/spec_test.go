@@ -18,7 +18,7 @@ import (
 func schemas(t *testing.T) map[string]*jsonschema.Schema {
 	t.Helper()
 	out := map[string]*jsonschema.Schema{}
-	for _, kind := range []string{"event", "memory", "entity", "appraisal", "link", "profile"} {
+	for _, kind := range []string{"event", "entity", "appraisal", "link", "profile"} {
 		s, err := spec.Schema(kind)
 		if err != nil {
 			t.Fatal(err)
@@ -37,8 +37,6 @@ func decode(kind string, raw []byte) (validator, error) {
 	switch kind {
 	case "event":
 		into = &record.Event{}
-	case "memory":
-		into = &record.Memory{}
 	case "entity":
 		into = &record.Entity{}
 	case "appraisal":
@@ -55,8 +53,6 @@ func decode(kind string, raw []byte) (validator, error) {
 	}
 	switch v := into.(type) {
 	case *record.Event:
-		return *v, nil
-	case *record.Memory:
 		return *v, nil
 	case *record.Entity:
 		return *v, nil
@@ -142,14 +138,6 @@ func TestSchemaAndGoRefuseTheSameRecords(t *testing.T) {
 		}},
 		{"attribute key without namespace", "event.meeting.json", func(m map[string]any) {
 			m["attributes"] = map[string]any{"amount": 3}
-		}},
-		{"memory without statement", "memory.retry-limit.json", func(m map[string]any) { delete(m, "statement") }},
-		{"confidence above one", "memory.retry-limit.json", func(m map[string]any) { m["confidence"] = 1.5 }},
-		{"unknown evidence role", "memory.retry-limit.json", func(m map[string]any) {
-			m["evidence"] = []any{map[string]any{"event": "ev_01J", "role": "maybe"}}
-		}},
-		{"negative recall count", "memory.retry-limit.json", func(m map[string]any) {
-			m["recall"] = map[string]any{"count": -1}
 		}},
 		{"declared kind without namespace", "entity.deal.json", func(m map[string]any) { m["type"] = "deal" }},
 		{"unknown class", "entity.place.json", func(m map[string]any) { m["class"] = "room" }},
@@ -237,9 +225,6 @@ func TestRulesOnlyGoChecks(t *testing.T) {
 		{"meeting ends before it starts", "event.meeting.json", func(m map[string]any) {
 			m["ended_at"] = "2026-04-21T08:00:00Z"
 		}, "ended_at"},
-		{"memory stops holding before it starts", "memory.retry-limit.json", func(m map[string]any) {
-			m["valid_until"] = "2026-01-01T00:00:00Z"
-		}, "valid_until"},
 		{"event part of itself", "event.review-comment.json", func(m map[string]any) { m["part_of"] = m["id"] }, "part_of"},
 		{"entity its own parent", "entity.subject.json", func(m map[string]any) { m["parent"] = m["id"] }, "parent"},
 		{"link to itself", "link.json", func(m map[string]any) { m["to"] = m["from"] }, "to"},

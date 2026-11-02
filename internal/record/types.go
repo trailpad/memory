@@ -63,19 +63,16 @@ type Entity struct {
 	Source     *Source    `json:"source,omitempty"`
 }
 
-// Participant is an actor's part in one event or memory.
 type Participant struct {
 	Actor string `json:"actor"`
 	Role  Role   `json:"role"`
 }
 
-// SubjectRef is what an event or memory is about, and how.
 type SubjectRef struct {
 	Subject string `json:"subject"`
 	Role    Role   `json:"role"`
 }
 
-// Involvement ties an event or memory to any entity, with a role.
 type Involvement struct {
 	Entity string `json:"entity"`
 	Role   Role   `json:"role"`
@@ -88,12 +85,12 @@ type Utterance struct {
 	At      *Instant `json:"at,omitempty"`
 }
 
-// Event is something that happened, once. Events are never changed after
-// capture; they are evidence.
 type Event struct {
 	Bucket       string        `json:"bucket"`
 	ID           string        `json:"id"`
 	Type         Type          `json:"type"`
+	Why          string        `json:"why,omitempty"`
+	Recall       *Rehearsal    `json:"recall,omitempty"`
 	OccurredAt   *Instant      `json:"occurred_at,omitempty"`
 	EndedAt      *Instant      `json:"ended_at,omitempty"`
 	Place        string        `json:"place,omitempty"`
@@ -103,54 +100,15 @@ type Event struct {
 	Involves     []Involvement `json:"involves,omitempty"`
 	PartOf       string        `json:"part_of,omitempty"`
 	InReplyTo    string        `json:"in_reply_to,omitempty"`
-	Appraisals   []string      `json:"appraisals,omitempty"`
+	Appraisals   []Appraisal   `json:"appraisals,omitempty"`
 	Attributes   Attributes    `json:"attributes,omitempty"`
 	Profiles     []string      `json:"profiles,omitempty"`
 	Source       *Source       `json:"source,omitempty"`
 }
 
-// Evidence is an event behind a memory and what it did for it.
-type Evidence struct {
-	Event string       `json:"event"`
-	Role  EvidenceRole `json:"role"`
-}
-
-// Dependency is a record a memory was made from. A memory is named with the
-// version that was read; none means the version current when the memory is
-// written. Events never change, so they carry none.
-type Dependency struct {
-	Record  string `json:"record"`
-	Version int    `json:"version,omitempty"`
-}
-
-// Rehearsal is how often and how lately a memory was brought back and used.
-// Only the store writes it.
 type Rehearsal struct {
 	Count  int      `json:"count"`
 	LastAt *Instant `json:"last_at,omitempty"`
-}
-
-// Memory is something learned that holds until it does not, drawn from one
-// or more events.
-type Memory struct {
-	Bucket       string        `json:"bucket"`
-	ID           string        `json:"id"`
-	Type         Type          `json:"type"`
-	Statement    string        `json:"statement"`
-	Why          string        `json:"why,omitempty"`
-	ValidFrom    *Instant      `json:"valid_from,omitempty"`
-	ValidUntil   *Instant      `json:"valid_until,omitempty"`
-	Confidence   *float64      `json:"confidence,omitempty"`
-	Evidence     []Evidence    `json:"evidence,omitempty"`
-	DependsOn    []Dependency  `json:"depends_on,omitempty"`
-	Subjects     []SubjectRef  `json:"subjects,omitempty"`
-	Participants []Participant `json:"participants,omitempty"`
-	Involves     []Involvement `json:"involves,omitempty"`
-	Appraisals   []string      `json:"appraisals,omitempty"`
-	Recall       *Rehearsal    `json:"recall,omitempty"`
-	Attributes   Attributes    `json:"attributes,omitempty"`
-	Profiles     []string      `json:"profiles,omitempty"`
-	Source       *Source       `json:"source,omitempty"`
 }
 
 // Appraisal is one judgement of how something landed, by someone, at a time.

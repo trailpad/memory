@@ -13,10 +13,7 @@ import (
 var (
 	// ErrNotFound is returned when no record has the id.
 	ErrNotFound = errors.New("not found")
-	// ErrChanged is returned when an event, appraisal or link is written
-	// again with different content. Those are evidence and never change; a
-	// correction is a new record.
-	ErrChanged = errors.New("already recorded with different content")
+	ErrChanged  = errors.New("already recorded with different content")
 )
 
 // Batch is records written together, in one transaction. References between
@@ -24,20 +21,14 @@ var (
 type Batch struct {
 	Entities   []record.Entity    `json:"entities,omitempty"`
 	Events     []record.Event     `json:"events,omitempty"`
-	Memories   []record.Memory    `json:"memories,omitempty"`
 	Appraisals []record.Appraisal `json:"appraisals,omitempty"`
 	Links      []record.Link      `json:"links,omitempty"`
-	// Lineage is each event's and memory's type followed by every type it
-	// falls back to, read with the profiles the record names, by position in
-	// the batch. Profile versions never change, so it is worked out once at
-	// capture. Missing, the store uses the type's namespace parents.
-	Lineage Lineage `json:"-"`
+	Lineage    Lineage            `json:"-"`
 }
 
 // Lineage holds type chains by position: Events[i] is for Batch.Events[i].
 type Lineage struct {
-	Events   [][]record.Type
-	Memories [][]record.Type
+	Events [][]record.Type
 }
 
 // TypeLineage is the chain recorded for position i, or the type's namespace
@@ -84,12 +75,5 @@ type Store interface {
 	// Entities reads several entities at once, by id. Ids the access may not
 	// read are left out, exactly as ids nothing has.
 	Entities(ctx context.Context, access Access, ids []string) (map[string]record.Entity, error)
-	// Memory is the version current at asOf (the store's clock), or the
-	// current one when asOf is nil.
-	Memory(ctx context.Context, access Access, id string, asOf *time.Time) (record.Memory, error)
-	// Kinds says what kind of record each stored id is. Ids nothing has, or
-	// that name a record the access may not read, are left out alike. A
-	// memory counts when any of its versions may be read, since a memory can
-	// be made from an earlier version.
 	Kinds(ctx context.Context, access Access, ids []string) (map[string]record.Kind, error)
 }

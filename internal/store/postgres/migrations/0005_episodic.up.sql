@@ -1,0 +1,15 @@
+drop table dependencies, evidence, memories;
+delete from involvements where record_kind = 'memory';
+delete from rehearsals;
+alter table rehearsals drop constraint rehearsals_workspace_id_memory_id_fkey;
+alter table rehearsals rename column memory_id to event_id;
+drop index rehearsals_memory;
+alter table rehearsals add foreign key (workspace_id, event_id) references events (workspace_id, id);
+create index rehearsals_event on rehearsals (workspace_id, event_id, principal, recorded_at);
+delete from record_ids where kind = 'memory';
+alter table record_ids drop constraint record_ids_kind_check;
+alter table record_ids add constraint record_ids_kind_check check (kind in ('entity', 'event', 'appraisal', 'link'));
+alter table involvements drop constraint involvements_record_kind_check;
+alter table involvements add constraint involvements_record_kind_check check (record_kind = 'event');
+alter table events add column why text check (char_length(why) <= 8192);
+update events set body = body - 'appraisals' - 'recall';

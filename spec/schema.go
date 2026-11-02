@@ -60,8 +60,6 @@ func load() {
 	}
 }
 
-// Schema is the compiled schema for one kind: event, memory, entity,
-// appraisal, link, profile.
 func Schema(kind string) (*jsonschema.Schema, error) {
 	once.Do(load)
 	if failed != nil {

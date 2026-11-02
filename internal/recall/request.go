@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"time"
 
 	"github.com/trailpad/memory/internal/record"
 )
@@ -23,41 +22,6 @@ type Context struct {
 	At           *record.Instant `json:"at,omitempty"`
 }
 
-// ValidAt is "now", a time, or null for memories whether or not they still
-// hold. Left out, it means now.
-type ValidAt struct {
-	Set bool
-	Any bool
-	At  *time.Time
-}
-
-func (v *ValidAt) UnmarshalJSON(data []byte) error {
-	v.Set = true
-	switch {
-	case bytes.Equal(data, []byte("null")):
-		v.Any = true
-		return nil
-	case bytes.Equal(data, []byte(`"now"`)):
-		return nil
-	}
-	var at record.Instant
-	if err := json.Unmarshal(data, &at); err != nil {
-		return fmt.Errorf(`valid_at is "now", a time or null: %w`, err)
-	}
-	v.At = &at.At
-	return nil
-}
-
-func (v ValidAt) MarshalJSON() ([]byte, error) {
-	switch {
-	case v.Any:
-		return []byte("null"), nil
-	case v.At != nil:
-		return json.Marshal(record.Exact(*v.At))
-	}
-	return []byte(`"now"`), nil
-}
-
 // Span is a stretch of time, from inclusive and to exclusive.
 type Span struct {
 	From *record.Instant `json:"from,omitempty"`
@@ -68,7 +32,6 @@ type Span struct {
 type Filters struct {
 	Kinds    []string      `json:"kinds,omitempty"`
 	Types    []record.Type `json:"types,omitempty"`
-	ValidAt  ValidAt       `json:"valid_at"`
 	Occurred *Span         `json:"occurred,omitempty"`
 	// Buckets narrows the recall to these buckets, never past what the
 	// caller may read.
@@ -83,8 +46,7 @@ type Filters struct {
 
 // Expand asks for more around each result.
 type Expand struct {
-	Evidence   bool `json:"evidence,omitempty"`
-	Neighbours int  `json:"neighbours,omitempty"`
+	Neighbours int `json:"neighbours,omitempty"`
 }
 
 // Request is one recall.
@@ -132,8 +94,8 @@ func (r Request) Validate() record.Problems {
 		add("limit", "is between 1 and %d", MaxLimit)
 	}
 	for i, k := range r.Filters.Kinds {
-		if k != "memory" && k != "event" {
-			add(fmt.Sprintf("filters.kinds[%d]", i), "%q is not memory or event", k)
+		if k != "event" {
+			add(fmt.Sprintf("filters.kinds[%d]", i), "%q is not event", k)
 		}
 	}
 	for i, t := range r.Filters.Types {

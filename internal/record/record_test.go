@@ -96,17 +96,14 @@ func TestEachPrecisionSpansItsUnit(t *testing.T) {
 }
 
 func TestEveryProblemIsReportedAtOnce(t *testing.T) {
-	bad := record.Memory{Type: "Constraint", Confidence: ptr(2.0),
-		Evidence: []record.Evidence{{Role: "maybe"}}}
+	bad := record.Event{Type: "Meeting", Participants: []record.Participant{{}}}
 	fields := map[string]bool{}
 	for _, p := range bad.Validate() {
 		fields[p.Field] = true
 	}
-	for _, want := range []string{"id", "type", "statement", "confidence", "evidence[0].event", "evidence[0].role"} {
+	for _, want := range []string{"id", "bucket", "type", "participants[0].actor", "participants[0].role"} {
 		if !fields[want] {
-			t.Errorf("no problem reported on %s; got %v", want, fields)
+			t.Errorf("no problem on %s: %v", want, fields)
 		}
 	}
 }
-
-func ptr[T any](v T) *T { return &v }

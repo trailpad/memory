@@ -1,6 +1,5 @@
 package record
 
-// Role is the part an actor or entity plays in an event or memory.
 type Role = Type
 
 const (
@@ -17,22 +16,3 @@ const (
 	Observer  Role = "observer"
 	About     Role = "about"
 )
-
-// EvidenceRole is what an event did for a memory.
-type EvidenceRole string
-
-const (
-	Established  EvidenceRole = "established"
-	Reinforced   EvidenceRole = "reinforced"
-	Refined      EvidenceRole = "refined"
-	Contradicted EvidenceRole = "contradicted"
-	Retired      EvidenceRole = "retired"
-)
-
-func (r EvidenceRole) valid() bool {
-	switch r {
-	case Established, Reinforced, Refined, Contradicted, Retired:
-		return true
-	}
-	return false
-}

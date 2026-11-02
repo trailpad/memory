@@ -74,19 +74,6 @@ func (c *Capture) Ingest(ctx context.Context, access store.Access, b store.Batch
 		define(at, e.ID, record.Kind{Record: "event"})
 		holders = append(holders, holder{at, e.Refs()})
 	}
-	for i := range b.Memories {
-		m := &b.Memories[i]
-		at := fmt.Sprintf("memories[%d]", i)
-		add(at, m.Validate())
-		lineage := m.Type.Lineage()
-		if r := resolver(at, m.Profiles); r != nil {
-			add(at, r.CheckAttributes("attributes", m.Attributes))
-			lineage = r.MemoryLineage(m.Type)
-		}
-		b.Lineage.Memories = append(b.Lineage.Memories, lineage)
-		define(at, m.ID, record.Kind{Record: "memory"})
-		holders = append(holders, holder{at, m.Refs()})
-	}
 	for i := range b.Appraisals {
 		a := &b.Appraisals[i]
 		at := fmt.Sprintf("appraisals[%d]", i)

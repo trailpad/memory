@@ -41,6 +41,7 @@
     },
     "profiles": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9_]+@[0-9]+$" } },
     "participants": {
+      "description": "Actors and how they took part. Use on_behalf_of for the actor another participant acted for, alongside the acting participant and its role. Participation grants no access.",
       "type": "array",
       "items": {
         "type": "object",

@@ -33,6 +33,8 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      - name: Vocabulary
+        run: bash scripts/check-vocabulary.sh
       - name: Formatting
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - name: Modules are tidy

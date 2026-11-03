@@ -4,12 +4,9 @@ import (
 	"context"
 	"math"
 	"sort"
-	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/trailpad/memory/internal/profile"
-	"github.com/trailpad/memory/internal/record"
 	"github.com/trailpad/memory/internal/store"
 )
 
@@ -28,12 +25,10 @@ type Response struct {
 
 // Result is one record and why it came back.
 type Result struct {
-	Kind     string   `json:"kind"`
-	ID       string   `json:"id"`
-	Record   any      `json:"record"`
-	Score    float64  `json:"score"`
-	Because  *Because `json:"because,omitempty"`
-	Evidence []Quote  `json:"evidence,omitempty"`
+	ID      string   `json:"id"`
+	Record  any      `json:"record"`
+	Score   float64  `json:"score"`
+	Because *Because `json:"because,omitempty"`
 }
 
 // Because is each signal on its own, the cues shared and the path from the
@@ -50,18 +45,6 @@ type CueMatch struct {
 	Score  float64  `json:"score"`
 	Shared []string `json:"shared,omitempty"`
 }
-
-// Quote is an event behind a memory: what it did for the memory, what was
-// said, and where, from the outermost place in.
-type Quote struct {
-	Event     string   `json:"event"`
-	Role      string   `json:"role"`
-	Quote     string   `json:"quote,omitempty"`
-	PlacePath []string `json:"place_path,omitempty"`
-}
-
-// QuoteLength is how many characters of an utterance a quote keeps.
-const QuoteLength = 280
 
 func (s *Service) now() time.Time {
 	if s.Now != nil {
@@ -89,7 +72,7 @@ func (s *Service) Recall(ctx context.Context, access store.Access, req Request) 
 		limit = DefaultLimit
 	}
 	pool := max(limit*5, 50)
-	scope := s.scope(req, now)
+	scope := s.scope(req)
 	scope.UsedBy = &at
 
 	textRefs, err := s.Store.Text(ctx, access, scope, req.Context.Text, pool)
@@ -223,12 +206,8 @@ func (s *Service) Recall(ctx context.Context, access store.Access, req Request) 
 			Cue:       cue[id],
 			Recency:   recency(f.Happened, lastUsed(f, at), at, s.halfLife(f, resolvers[id])),
 		}
-		res := Result{Kind: f.Ref.Kind, ID: id, Score: combine(signals, w)}
-		if f.Memory != nil {
-			res.Record = f.Memory
-		} else {
-			res.Record = f.Event
-		}
+		res := Result{ID: id, Score: combine(signals, w)}
+		res.Record = f.Event
 		if req.Explain {
 			because := &Because{Relevance: signals[Relevance], Cue: CueMatch{Score: signals[Cue]}, Recency: signals[Recency]}
 			shared := make([]strongest, 0, len(best[id]))
@@ -261,8 +240,12 @@ func (s *Service) Recall(ctx context.Context, access store.Access, req Request) 
 	if len(results) > limit {
 		results = results[:limit]
 	}
-	if req.Explain || req.Expand.Evidence {
-		if err := s.quote(ctx, access, scope, results); err != nil {
+	if req.AsOf == nil && req.Context.At == nil {
+		ids := make([]string, len(results))
+		for i, r := range results {
+			ids[i] = r.ID
+		}
+		if err := s.Store.Rehearse(ctx, access, ids, now); err != nil {
 			return Response{}, err
 		}
 	}
@@ -271,22 +254,15 @@ func (s *Service) Recall(ctx context.Context, access store.Access, req Request) 
 
 // Use records that results were useful, which keeps them fresher in later
 // recalls. Browsing must not call it.
-func (s *Service) Use(ctx context.Context, access store.Access, memories []string) error {
-	return s.Store.Rehearse(ctx, access, memories, s.now())
+func (s *Service) Use(ctx context.Context, access store.Access, events []string) error {
+	return s.Store.Rehearse(ctx, access, events, s.now())
 }
 
-func (s *Service) scope(req Request, now time.Time) store.Scope {
-	scope := store.Scope{Kinds: req.Filters.Kinds}
+func (s *Service) scope(req Request) store.Scope {
+	scope := store.Scope{}
 	if req.AsOf != nil {
 		t := req.AsOf.At
 		scope.AsOf = &t
-	}
-	switch v := req.Filters.ValidAt; {
-	case v.Any:
-	case v.At != nil:
-		scope.ValidAt = v.At
-	default:
-		scope.ValidAt = &now
 	}
 	scope.Types = req.Filters.Types
 	scope.Buckets = req.Filters.Buckets
@@ -302,30 +278,21 @@ func (s *Service) scope(req Request, now time.Time) store.Scope {
 }
 
 func (s *Service) resolver(f store.Found) *profile.Resolver {
-	var refs []string
-	if f.Memory != nil {
-		refs = f.Memory.Profiles
-	} else {
-		refs = f.Event.Profiles
-	}
-	if r, err := s.Profiles.For(refs); err == nil {
+	if r, err := s.Profiles.For(f.Event.Profiles); err == nil {
 		return r
 	}
 	return s.Profiles.Resolver()
 }
 
 func (s *Service) halfLife(f store.Found, r *profile.Resolver) float64 {
-	if f.Memory != nil {
-		return r.HalfLifeDays(f.Memory.Type)
-	}
-	return profile.DefaultHalfLifeDays
+	return r.HalfLifeDays(f.Event.Type)
 }
 
 // lastUsed is the latest use at or before the moment asked about; a use
 // after it has not happened yet from there.
 func lastUsed(f store.Found, at time.Time) *time.Time {
-	if f.Memory != nil && f.Memory.Recall != nil && f.Memory.Recall.LastAt != nil && !f.Memory.Recall.LastAt.At.After(at) {
-		return &f.Memory.Recall.LastAt.At
+	if f.Event != nil && f.Event.Recall != nil && f.Event.Recall.LastAt != nil && !f.Event.Recall.LastAt.At.After(at) {
+		return &f.Event.Recall.LastAt.At
 	}
 	return nil
 }
@@ -339,85 +306,4 @@ func path(steps ...string) []string {
 		}
 	}
 	return out
-}
-
-// quote attaches the events behind each memory, with what was said there
-// and where.
-func (s *Service) quote(ctx context.Context, access store.Access, scope store.Scope, results []Result) error {
-	var refs []store.Ref
-	for _, r := range results {
-		if m, ok := r.Record.(*record.Memory); ok {
-			for _, e := range m.Evidence {
-				refs = append(refs, store.Ref{Kind: store.EventKind, ID: e.Event})
-			}
-		}
-	}
-	if len(refs) == 0 {
-		return nil
-	}
-	// Evidence is shown whatever its type or bucket filter; only the store's
-	// clock and what the access may read limit it.
-	found, err := s.Store.Records(ctx, access, store.Scope{AsOf: scope.AsOf}, refs)
-	if err != nil {
-		return err
-	}
-	events := map[string]*record.Event{}
-	var places []string
-	for _, f := range found {
-		events[f.Ref.ID] = f.Event
-		if f.Event.Place != "" {
-			places = append(places, f.Event.Place)
-		}
-	}
-	ancestors, err := s.Store.Ancestors(ctx, access, places)
-	if err != nil {
-		return err
-	}
-	var named []string
-	for _, hops := range ancestors {
-		for _, h := range hops {
-			named = append(named, h.Entity)
-		}
-	}
-	entities, err := s.Store.Entities(ctx, access, named)
-	if err != nil {
-		return err
-	}
-	for i, r := range results {
-		m, ok := r.Record.(*record.Memory)
-		if !ok {
-			continue
-		}
-		for _, e := range m.Evidence {
-			q := Quote{Event: e.Event, Role: string(e.Role)}
-			if ev := events[e.Event]; ev != nil {
-				q.Quote = firstWords(ev.Content)
-				hops := ancestors[ev.Place]
-				for j := len(hops) - 1; j >= 0; j-- {
-					name := entities[hops[j].Entity].Name
-					if name == "" {
-						name = hops[j].Entity
-					}
-					q.PlacePath = append(q.PlacePath, name)
-				}
-			}
-			results[i].Evidence = append(results[i].Evidence, q)
-		}
-	}
-	return nil
-}
-
-func firstWords(content []record.Utterance) string {
-	for _, u := range content {
-		text := strings.TrimSpace(u.Text)
-		if text == "" {
-			continue
-		}
-		if utf8.RuneCountInString(text) <= QuoteLength {
-			return text
-		}
-		runes := []rune(text)
-		return strings.TrimSpace(string(runes[:QuoteLength])) + "…"
-	}
-	return ""
 }

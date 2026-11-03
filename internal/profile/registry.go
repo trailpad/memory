@@ -39,16 +39,11 @@ type EntityType struct {
 }
 
 type EventType struct {
-	Type        record.Type `json:"type"`
-	FallsBackTo record.Type `json:"falls_back_to,omitempty"`
-	Icon        string      `json:"icon,omitempty"`
-	Medium      *Medium     `json:"medium,omitempty"`
-}
-
-type MemoryType struct {
+	HalfLifeDays float64     `json:"half_life_days,omitempty"`
 	Type         record.Type `json:"type"`
 	FallsBackTo  record.Type `json:"falls_back_to,omitempty"`
-	HalfLifeDays float64     `json:"half_life_days,omitempty"`
+	Icon         string      `json:"icon,omitempty"`
+	Medium       *Medium     `json:"medium,omitempty"`
 }
 
 type Role struct {
@@ -79,7 +74,6 @@ type Profile struct {
 	Version     string       `json:"version"`
 	EntityTypes []EntityType `json:"entity_types,omitempty"`
 	EventTypes  []EventType  `json:"event_types,omitempty"`
-	MemoryTypes []MemoryType `json:"memory_types,omitempty"`
 	Roles       []Role       `json:"roles,omitempty"`
 	Attributes  []Attribute  `json:"attributes,omitempty"`
 	Appraisals  []Dimension  `json:"appraisals,omitempty"`
@@ -137,11 +131,8 @@ func (p *Profile) check() error {
 	}
 	for i, t := range p.EventTypes {
 		owned(fmt.Sprintf("event_types[%d].type", i), t.Type)
-	}
-	for i, t := range p.MemoryTypes {
-		owned(fmt.Sprintf("memory_types[%d].type", i), t.Type)
 		if t.HalfLifeDays < 0 {
-			add(fmt.Sprintf("memory_types[%d].half_life_days", i), "cannot be negative")
+			add(fmt.Sprintf("event_types[%d].half_life_days", i), "cannot be negative")
 		}
 	}
 	for i, r := range p.Roles {

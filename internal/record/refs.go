@@ -2,7 +2,7 @@ package record
 
 import "fmt"
 
-// Target is the kind of record a reference must point at.
+// Target is the record type a reference must point at.
 type Target string
 
 const (
@@ -11,11 +11,8 @@ const (
 	TargetActor     Target = "actor"
 	TargetSubject   Target = "subject"
 	TargetEvent     Target = "event"
-	TargetMemory    Target = "memory"
 	TargetAppraisal Target = "appraisal"
 	TargetRecord    Target = "record"
-	// TargetInput is what a memory can be made from: an event or a memory.
-	TargetInput Target = "input"
 )
 
 // Ref is one field that holds the id of another record.
@@ -60,12 +57,6 @@ func (r *refs) roles(participants []Participant, subjects []SubjectRef, involves
 	}
 }
 
-func (r *refs) judgements(ids []string) {
-	for i := range ids {
-		r.later(fmt.Sprintf("appraisals[%d]", i), &ids[i], TargetAppraisal)
-	}
-}
-
 // Refs is every reference an entity holds, pointing into the entity so a
 // writer can rewrite them in place.
 func (e *Entity) Refs() []Ref {
@@ -93,23 +84,7 @@ func (e *Event) Refs() []Ref {
 	}
 	r.later("part_of", &e.PartOf, TargetEvent)
 	r.later("in_reply_to", &e.InReplyTo, TargetEvent)
-	r.judgements(e.Appraisals)
 	r.source(e.Source)
-	return r
-}
-
-// Refs is every reference a memory holds.
-func (m *Memory) Refs() []Ref {
-	var r refs
-	r.roles(m.Participants, m.Subjects, m.Involves)
-	for i := range m.Evidence {
-		r.add(fmt.Sprintf("evidence[%d].event", i), &m.Evidence[i].Event, TargetEvent)
-	}
-	for i := range m.DependsOn {
-		r.add(fmt.Sprintf("depends_on[%d].record", i), &m.DependsOn[i].Record, TargetInput)
-	}
-	r.judgements(m.Appraisals)
-	r.source(m.Source)
 	return r
 }
 
@@ -131,15 +106,12 @@ func (l *Link) Refs() []Ref {
 	return r
 }
 
-// Kind is what a stored or batched record is, as far as references care.
-type Kind struct {
-	Record string // entity, event, memory, appraisal, link
+type RecordType struct {
+	Record string // entity, event, appraisal, link
 	Class  Class  // for entities
 }
 
-// Accepts reports whether a reference of this target may point at a record
-// of this kind.
-func (t Target) Accepts(k Kind) bool {
+func (t Target) Accepts(k RecordType) bool {
 	switch t {
 	case TargetRecord:
 		return true
@@ -153,10 +125,6 @@ func (t Target) Accepts(k Kind) bool {
 		return k.Record == "entity" && k.Class == SubjectClass
 	case TargetEvent:
 		return k.Record == "event"
-	case TargetMemory:
-		return k.Record == "memory"
-	case TargetInput:
-		return k.Record == "event" || k.Record == "memory"
 	case TargetAppraisal:
 		return k.Record == "appraisal"
 	}

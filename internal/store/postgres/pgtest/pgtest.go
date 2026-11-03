@@ -95,11 +95,6 @@ func InBucket(b store.Batch, bucket string) store.Batch {
 			b.Events[i].Bucket = bucket
 		}
 	}
-	for i := range b.Memories {
-		if b.Memories[i].Bucket == "" {
-			b.Memories[i].Bucket = bucket
-		}
-	}
 	for i := range b.Appraisals {
 		if b.Appraisals[i].Bucket == "" {
 			b.Appraisals[i].Bucket = bucket

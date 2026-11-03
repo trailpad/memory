@@ -1,1 +1,9 @@
-{ "bucket": "bk_shop", "id": "ln_7", "from": "mm_retry_limit_v2", "type": "supersedes", "to": "mm_retry_limit", "at": "2026-06-01T00:00:00Z", "source": { "method": "manual", "by": "ac_ana" } }
+{
+  "bucket": "bk_shop",
+  "id": "ln_7",
+  "from": "ev_02K",
+  "type": "follows",
+  "to": "ev_01J",
+  "at": "2026-06-01T00:00:00Z",
+  "source": {"method": "manual", "by": "ac_ana"}
+}

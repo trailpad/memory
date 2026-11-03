@@ -3,34 +3,54 @@
   "$id": "https://schema.trailpad.ai/memory/0.1/event.json",
   "title": "Event",
   "type": "object",
-  "required": ["bucket", "id", "type"],
+  "required": [
+    "bucket",
+    "id",
+    "type"
+  ],
   "properties": {
-    "bucket": { "$ref": "common.json#/$defs/id" },
-    "id": { "$ref": "common.json#/$defs/id" },
-    "type": { "$ref": "common.json#/$defs/type" },
-    "occurred_at": { "$ref": "common.json#/$defs/instant" },
-    "ended_at": { "$ref": "common.json#/$defs/maybe_instant" },
-    "place": { "$ref": "common.json#/$defs/id" },
-    "participants": { "$ref": "common.json#/$defs/participants" },
+    "bucket": {"$ref": "common.json#/$defs/id"},
+    "id": {"$ref": "common.json#/$defs/id"},
+    "type": {"$ref": "common.json#/$defs/type"},
+    "occurred_at": {"$ref": "common.json#/$defs/instant"},
+    "ended_at": {"$ref": "common.json#/$defs/maybe_instant"},
+    "place": {"$ref": "common.json#/$defs/id"},
+    "participants": {"$ref": "common.json#/$defs/participants"},
     "content": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["text"],
+        "required": [
+          "text"
+        ],
         "properties": {
-          "speaker": { "$ref": "common.json#/$defs/id" },
-          "text": { "type": "string", "minLength": 1 },
-          "at": { "$ref": "common.json#/$defs/instant" }
+          "speaker": {"$ref": "common.json#/$defs/id"},
+          "text": {"type": "string", "minLength": 1},
+          "at": {"$ref": "common.json#/$defs/instant"}
         }
       }
     },
-    "subjects": { "$ref": "common.json#/$defs/subjects" },
-    "involves": { "$ref": "common.json#/$defs/involves" },
-    "part_of": { "$ref": "common.json#/$defs/id" },
-    "in_reply_to": { "$ref": "common.json#/$defs/id" },
-    "appraisals": { "$ref": "common.json#/$defs/ids" },
-    "attributes": { "$ref": "common.json#/$defs/attributes" },
-    "profiles": { "$ref": "common.json#/$defs/profiles" },
-    "source": { "$ref": "common.json#/$defs/source" }
+    "subjects": {"$ref": "common.json#/$defs/subjects"},
+    "involves": {"$ref": "common.json#/$defs/involves"},
+    "part_of": {"$ref": "common.json#/$defs/id"},
+    "in_reply_to": {"$ref": "common.json#/$defs/id"},
+    "appraisals": {
+      "type": "array",
+      "items": {"$ref": "appraisal.json"}
+    },
+    "attributes": {"$ref": "common.json#/$defs/attributes"},
+    "profiles": {"$ref": "common.json#/$defs/profiles"},
+    "source": {"$ref": "common.json#/$defs/source"},
+    "why": {"type": "string", "maxLength": 8192},
+    "recall": {
+      "type": "object",
+      "required": [
+        "count"
+      ],
+      "properties": {
+        "count": {"type": "integer", "minimum": 0},
+        "last_at": {"$ref": "common.json#/$defs/instant"}
+      }
+    }
   }
 }

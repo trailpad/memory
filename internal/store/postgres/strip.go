@@ -2,30 +2,21 @@ package postgres
 
 import (
 	"context"
-	"strings"
 
 	"github.com/trailpad/memory/internal/record"
 	"github.com/trailpad/memory/internal/store"
 )
 
-// strip removes from records every reference to a record the access may not
-// read, before they are returned. A reference to a record that does not
-// exist is removed too, so the two cannot be told apart. A memory's evidence
-// and dependencies stay: its requirement set already holds theirs.
-func (s *Store) strip(ctx context.Context, access store.Access, entities []*record.Entity, events []*record.Event, memories []*record.Memory) error {
+func (s *Store) strip(ctx context.Context, access store.Access, entities []*record.Entity, events []*record.Event) error {
 	var refs []record.Ref
 	for _, e := range entities {
+		if e.Class == record.ActorClass && e.Type == "team" {
+			e.Type = "group"
+		}
 		refs = append(refs, e.Refs()...)
 	}
 	for _, e := range events {
 		refs = append(refs, e.Refs()...)
-	}
-	for _, m := range memories {
-		for _, r := range m.Refs() {
-			if !strings.HasPrefix(r.Field, "evidence[") && !strings.HasPrefix(r.Field, "depends_on[") {
-				refs = append(refs, r)
-			}
-		}
 	}
 	if len(refs) == 0 {
 		return nil
@@ -53,13 +44,6 @@ func (s *Store) strip(ctx context.Context, access store.Access, entities []*reco
 		e.Participants = present(e.Participants, func(p record.Participant) string { return p.Actor })
 		e.Subjects = present(e.Subjects, func(s record.SubjectRef) string { return s.Subject })
 		e.Involves = present(e.Involves, func(v record.Involvement) string { return v.Entity })
-		e.Appraisals = present(e.Appraisals, func(id string) string { return id })
-	}
-	for _, m := range memories {
-		m.Participants = present(m.Participants, func(p record.Participant) string { return p.Actor })
-		m.Subjects = present(m.Subjects, func(s record.SubjectRef) string { return s.Subject })
-		m.Involves = present(m.Involves, func(v record.Involvement) string { return v.Entity })
-		m.Appraisals = present(m.Appraisals, func(id string) string { return id })
 	}
 	return nil
 }
@@ -86,7 +70,6 @@ func (s *Store) readable(ctx context.Context, access store.Access, ids []string)
 	rows, err := s.pool.Query(ctx, `
 		select id from entities where workspace_id = $1 and requires <@ $2 and id = any($3)
 		union select id from events where workspace_id = $1 and requires <@ $2 and id = any($3)
-		union select id from memories where workspace_id = $1 and superseded_at is null and requires <@ $2 and id = any($3)
 		union select id from appraisals where workspace_id = $1 and requires <@ $2 and id = any($3)
 		union select id from links where workspace_id = $1 and requires <@ $2 and id = any($3)`,
 		access.Workspace, access.Read, ids)

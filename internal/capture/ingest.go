@@ -38,12 +38,12 @@ func (c *Capture) Ingest(ctx context.Context, access store.Access, b store.Batch
 		return r
 	}
 
-	defined := map[string]record.Kind{}
-	define := func(prefix, id string, kind record.Kind) {
+	defined := map[string]record.RecordType{}
+	define := func(prefix, id string, recordType record.RecordType) {
 		if _, twice := defined[id]; twice && id != "" {
 			add(prefix, record.Problems{{Field: "id", Message: fmt.Sprintf("%s appears more than once in this batch", id)}})
 		}
-		defined[id] = kind
+		defined[id] = recordType
 	}
 	type holder struct {
 		prefix string
@@ -58,7 +58,7 @@ func (c *Capture) Ingest(ctx context.Context, access store.Access, b store.Batch
 		if r := resolver(at, e.Profiles); r != nil {
 			add(at, r.CheckAttributes("attributes", e.Attributes))
 		}
-		define(at, e.ID, record.Kind{Record: "entity", Class: e.Class})
+		define(at, e.ID, record.RecordType{Record: "entity", Class: e.Class})
 		holders = append(holders, holder{at, e.Refs()})
 	}
 	for i := range b.Events {
@@ -71,21 +71,8 @@ func (c *Capture) Ingest(ctx context.Context, access store.Access, b store.Batch
 			lineage = r.EventLineage(e.Type)
 		}
 		b.Lineage.Events = append(b.Lineage.Events, lineage)
-		define(at, e.ID, record.Kind{Record: "event"})
+		define(at, e.ID, record.RecordType{Record: "event"})
 		holders = append(holders, holder{at, e.Refs()})
-	}
-	for i := range b.Memories {
-		m := &b.Memories[i]
-		at := fmt.Sprintf("memories[%d]", i)
-		add(at, m.Validate())
-		lineage := m.Type.Lineage()
-		if r := resolver(at, m.Profiles); r != nil {
-			add(at, r.CheckAttributes("attributes", m.Attributes))
-			lineage = r.MemoryLineage(m.Type)
-		}
-		b.Lineage.Memories = append(b.Lineage.Memories, lineage)
-		define(at, m.ID, record.Kind{Record: "memory"})
-		holders = append(holders, holder{at, m.Refs()})
 	}
 	for i := range b.Appraisals {
 		a := &b.Appraisals[i]
@@ -94,7 +81,7 @@ func (c *Capture) Ingest(ctx context.Context, access store.Access, b store.Batch
 		if r := resolver(at, a.Profiles); r != nil {
 			add(at, r.CheckDimensions("dimensions", a.Dimensions))
 		}
-		define(at, a.ID, record.Kind{Record: "appraisal"})
+		define(at, a.ID, record.RecordType{Record: "appraisal"})
 		holders = append(holders, holder{at, a.Refs()})
 	}
 	for i := range b.Links {
@@ -102,7 +89,7 @@ func (c *Capture) Ingest(ctx context.Context, access store.Access, b store.Batch
 		at := fmt.Sprintf("links[%d]", i)
 		add(at, l.Validate())
 		resolver(at, l.Profiles)
-		define(at, l.ID, record.Kind{Record: "link"})
+		define(at, l.ID, record.RecordType{Record: "link"})
 		holders = append(holders, holder{at, l.Refs()})
 	}
 	if len(problems) > 0 {
@@ -117,22 +104,22 @@ func (c *Capture) Ingest(ctx context.Context, access store.Access, b store.Batch
 			}
 		}
 	}
-	stored, err := c.Store.Kinds(ctx, access, outside)
+	stored, err := c.Store.RecordTypes(ctx, access, outside)
 	if err != nil {
 		return store.Written{}, err
 	}
 	for _, h := range holders {
 		for _, r := range h.refs {
-			kind, ok := defined[*r.ID]
+			recordType, ok := defined[*r.ID]
 			if !ok {
-				kind, ok = stored[*r.ID]
+				recordType, ok = stored[*r.ID]
 			}
 			field := h.prefix + "." + r.Field
 			switch {
 			case !ok && !r.MayDangle:
 				problems = append(problems, record.Problem{Field: field, Message: fmt.Sprintf("%s is not in this batch or the store", *r.ID)})
-			case ok && !r.Target.Accepts(kind):
-				problems = append(problems, record.Problem{Field: field, Message: fmt.Sprintf("%s is %s, not %s", *r.ID, describe(kind), article(string(r.Target)))})
+			case ok && !r.Target.Accepts(recordType):
+				problems = append(problems, record.Problem{Field: field, Message: fmt.Sprintf("%s is %s, not %s", *r.ID, describe(recordType), article(string(r.Target)))})
 			}
 		}
 	}
@@ -142,7 +129,7 @@ func (c *Capture) Ingest(ctx context.Context, access store.Access, b store.Batch
 	return c.Store.Write(ctx, access, b)
 }
 
-func describe(k record.Kind) string {
+func describe(k record.RecordType) string {
 	if k.Record == "entity" && k.Class != "" {
 		return article(string(k.Class))
 	}

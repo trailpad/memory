@@ -1,288 +1,63 @@
 # Architecture
 
-Draft 0.1. How a reference implementation of the Memory spec is laid out, written in Go.
+The Go service stores episodic events in PostgreSQL and exposes JSON over HTTP. A client application owns semantic facts and writes events describing what happened to them.
 
-## 1. Shape
+## Packages
 
-One service, one database, three jobs.
+| Package | Responsibility |
+|---|---|
+| `cmd/memoryd` | HTTP service and operator commands for workspaces, services, issuers and grants |
+| `internal/api/http` | Authentication, request decoding, HTTP responses and event listings |
+| `internal/capture` | Record validation, profile validation and reference checks |
+| `internal/record` | Events, entities, appraisals, links, sources and field validation |
+| `internal/profile` | Versioned vocabularies, fallback types, role weights and event decay |
+| `internal/store` | Persistence and candidate retrieval contracts |
+| `internal/store/postgres` | Transactions, access predicates, migrations and search queries |
+| `internal/recall` | Candidate selection, relevance, cues, recency and explanation |
+| `spec/schema` | Embedded JSON Schemas shared with clients |
 
-```
-                 ┌──────────────────────────────────────────────┐
-  capture  ───►  │  write      events, memories, places, actors, │
-  (webhooks,     │             subjects, appraisals, links       │
-  importers,     │                                               │
-  extractors)    │  recall     context in, ranked and explained  │ ◄───  apps, agents,
-                 │             records out                       │        timelines
-                 │                                               │
-                 │  maintain   decay, identity joins, conflicts, │
-                 │             re-embedding, graph refresh       │
-                 └───────────────────────┬──────────────────────┘
-                                         │
-                                ┌────────▼────────┐
-                                │   PostgreSQL    │
-                                │  rows, text     │
-                                │  index, vectors │
-                                │  (pgvector),    │
-                                │  edges          │
-                                └─────────────────┘
-```
+HTTP calls capture and recall; these depend on store interfaces. PostgreSQL implements those interfaces. Ranking has no HTTP dependency.
 
-Constraints that drive it:
+## Storage
 
-- **Events are append only.** A correction is a new event or a new appraisal, never an update. The write path is inserts.
-- **Recall is the product.** Everything else exists to make recall fast, correct and explainable.
-- **Access is applied inside the query**, never by filtering results afterwards, so counts, scores and pages never leak a record the caller cannot see.
-- **One database to start.** PostgreSQL holds rows, full text search, vectors (pgvector, HNSW since 0.5.0) and the cue graph as an edge table. A separate graph or vector database is added only when a measured query needs it.
-- **Extraction is a client, not part of the core.** A model that turns events into memories calls the same write API as any other client, so the store never depends on a model provider.
+| Table | Holds |
+|---|---|
+| `events` | Immutable event bodies, occurrence time, reason, type lineage and full text index |
+| `entities` | Places, actors, subjects and extension entities |
+| `record_ids` | Workspace scoped ownership of every record ID |
+| `involvements` | Event ties to places, participants, subjects and other entities |
+| `appraisals` | Immutable judgements targeting records |
+| `links` | Immutable typed relations between records |
+| `rehearsals` | Event uses with principal, use time and recorded time |
+| `profiles` | Versioned vocabularies |
+| `identities` | Actor handles on source platforms |
+| `workspaces`, `buckets` | Isolation and record access boundaries |
+| `principals`, `services`, `installations`, `issuers` | Authenticated callers and trusted sources |
+| `subjects`, `account_links` | Issuer subjects and proven source accounts |
+| `grants`, `synced_readers`, `access_log` | Access grants, expiring readers and access changes |
 
-## 2. Repository layout
+Every record carries a workspace, bucket and requirement set. Queries require that the caller can read every bucket in that set. Appraisals inherit target requirements; links inherit both endpoint requirements. Hidden records never enter candidate counts or scores, and hidden references are stripped from read responses.
 
-One Go module, `github.com/trailpad/memory`. Implementation lives under `internal/`, so the only things other code can import are the client and the spec's schemas; the engine's insides can change without breaking anyone.
+Migration 0005 drops the semantic record tables, removes their involvement and rehearsal rows, restricts record categories to the remaining records, attaches rehearsals to events, and adds the bounded event reason column. Rollback recreates the former tables and indexes but cannot recover deleted data or uses. Earlier migrations are unchanged.
 
-```
-memory/
-├── spec/
-│   ├── SPEC.md                  the record format and recall contract
-│   ├── ARCHITECTURE.md          this document
-│   └── schema/                  JSON Schema for every record, profile and recall;
-│       ├── event.json             the spec in a form other languages can check
-│       ├── memory.json
-│       ├── entity.json            places, actors, subjects and declared kinds
-│       ├── appraisal.json
-│       ├── link.json
-│       ├── profile.json
-│       └── recall.json
-│
-├── cmd/
-│   ├── memoryd/                 the service
-│   └── memory/                  command line client for querying and administration
-│
-├── pkg/
-│   └── client/                  the Go client; other languages generated from openapi
-│
-├── internal/
-│   ├── record/                  the records as Go types; depends on nothing
-│   │   ├── types.go             Event, Memory, Place, Actor, Subject, Entity,
-│   │   │                        Appraisal, Link, Source
-│   │   ├── kind.go              namespaced types and their fallback chain
-│   │   ├── role.go              roles held by participants and involved entities
-│   │   ├── attribute.go         namespaced values on records and entities
-│   │   ├── time.go              instants with precision, the two clocks
-│   │   └── validate.go          the rules the spec states
-│   │
-│   ├── profile/                 vocabularies for other fields (spec §11)
-│   │   ├── core.json            the spec's own types and roles, as a profile
-│   │   ├── registry.go          register and version profiles
-│   │   └── resolve.go           type fallback, role cue weights, decay per type
-│   │
-│   ├── store/                   persistence behind one interface
-│   │   ├── store.go             Put, Get, Link, Candidates
-│   │   ├── memstore/            in memory, for tests and the conformance suite
-│   │   └── postgres/
-│   │       ├── migrations/
-│   │       ├── write.go         idempotent on source system + native id
-│   │       ├── read.go
-│   │       ├── candidates.go    the SQL that finds recall candidates (§4)
-│   │       └── index.go         indexes for attributes a profile marks filterable
-│   │
-│   ├── capture/                 the write path
-│   │   ├── ingest.go            resolve references, dedupe
-│   │   ├── identity.go          join actors across platforms, as recorded claims
-│   │   └── activitystreams.go   map Activity Vocabulary records in
-│   │
-│   ├── appraise/
-│   │   └── reduce.go            many appraisals to one effective appraisal
-│   │
-│   ├── recall/                  the recall pipeline (§3)
-│   │   ├── request.go
-│   │   ├── plan.go
-│   │   ├── candidates.go
-│   │   ├── spread.go            personalised PageRank from the context's cues
-│   │   ├── rank.go              normalise, weigh, sort; weight presets
-│   │   ├── expand.go            evidence events, quotes, place paths
-│   │   ├── explain.go           the "because" block on each result
-│   │   ├── rehearse.go          write back recall count when a result is used
-│   │   └── signals/
-│   │       ├── relevance.go     lexical and semantic, each scaled to its best match
-│   │       ├── cue.go           shared entities, weighted by rarity and role
-│   │       ├── recency.go       decay per memory type, rehearsal
-│   │       ├── importance.go
-│   │       ├── affect.go
-│   │       ├── authority.go     place formality and participants' roles
-│   │       └── validity.go      contradicted but not retired
-│   │
-│   ├── access/                  SPEC §13
-│   │   ├── principal.go         principals, groups, account links
-│   │   ├── grant.go             grants by origin, settings, open mode
-│   │   ├── token.go             service credentials, issuer tokens, delegation
-│   │   └── snapshot.go          what a principal may read, fixed per request
-│   │
-│   ├── embed/
-│   │   └── embed.go             Embedder interface; providers are adapters,
-│   │                            none required to run
-│   │
-│   ├── maintain/
-│   │   ├── decay.go
-│   │   ├── conflicts.go
-│   │   ├── reembed.go
-│   │   └── graph.go             cue rarity counts and the spreading graph
-│   │
-│   └── api/
-│       ├── http/                JSON over HTTP, routes mirror the spec
-│       └── openapi.yaml
-│
-└── conformance/                 the spec's acceptance tests as data
-    ├── fixtures/                a fixed world of entities, events and memories
-    ├── questions/               the recall questions with expected results
-    └── run.go                   runs any implementation against them over HTTP
-```
+## Write path
 
-Packages depend only on packages below them:
+Capture validates fields and profiles, checks referenced record types, then submits one transaction. The store checks writable buckets, takes ordered advisory locks, resolves source duplicates, rewrites references, computes requirements and writes the records. Repeating an unchanged event is harmless; changing an event under the same ID is refused.
 
-```
-cmd ─► api ─► capture, recall, maintain ─► appraise, access, embed, profile ─► store ─► record
-```
+An event's `why` is stored both in its JSON body and a bounded text column. Its search vector combines `why` with utterance text. Event bodies exclude derived appraisals and rehearsal counts. Appraisals are written separately and joined on reads, so a later judgement can attach without changing the event.
 
-`record` depends on nothing. `store` knows SQL but not ranking. `recall` knows ranking but not HTTP.
+## Read and recall path
 
-## 3. Recall pipeline
+Direct event reads and listings load readable appraisals by target ID. Appraisals are also attached to recall results, respecting `as_of`. Listings return involved entities so clients can display participants and places without individual requests.
 
-```
- request
-    │
-    ▼
- parse + defaults ──── weights preset (review, planning, incident, ...)
-    │
-    ▼
- plan ─────────────── which candidate sources this request needs
-    │
-    ▼
- candidates (parallel, each already limited by access and filters)
-    ├── lexical        full text match on statement, why, content
-    ├── semantic       nearest vectors
-    ├── cue            records sharing the context's places, actors, subjects
-    │                  (at every level of nesting)
-    └── spread         personalised PageRank seeded by the same cues
-    │
-    ▼
- merge ────────────── one row per record, each source's rank kept
-    │
-    ▼
- signals ──────────── relevance, cue, recency, importance, affect,
-    │                 authority, validity, each 0..1
-    ▼
- rank ─────────────── weighted sum, sort, limit
-    │
-    ▼
- expand ───────────── evidence events, quotes, place paths, neighbours
-    │
-    ▼
- explain ──────────── per result: signals, shared cues, path reached by
-    │
-    ▼
- response
-```
+Recall finds lexical and entity cue candidates under the same access rule. Parent walks stop at unreadable entities and have bounded depth. Rarity and role weights determine cue strength. Relevance scales text matches against the best candidate. Recency decays from event occurrence time, with an event type specific half life and the latest eligible rehearsal.
 
-Every stage is a plain function over a slice of candidates, so each can be tested alone and swapped without touching the others.
+Results are scored, sorted and limited before current recalls write rehearsal rows. Explicit event use writes the same rows. Historical requests only read them. Rehearsals are scoped to a workspace and principal, so one caller's use never strengthens another caller's events.
 
-## 4. Storage
+The implementation supports lexical retrieval, cue matching, recency, explanations and profile fallbacks. Vector retrieval, graph spreading and separate appraisal ranking signals remain future work.
 
-Tables (one per record kind) plus the joins that make cues queryable. Every table but `profiles` carries `workspace_id`, which leads every key and index: ids, sources and handles are unique within a workspace, never across.
+## Running and testing
 
-| Table | Holds | Indexes |
-|---|---|---|
-| `workspaces` | the boundary between customers, with its outside reference | `id` primary key |
-| `buckets` | where records live, with the source container a bucket mirrors; deleted rows stay | `(workspace_id, id)`, binding unique, one quarantine per workspace |
-| `record_ids` | every id, with its record kind and entity class | `(workspace_id, id)` primary key |
-| `events` | events, append only | `occurred_at`, `place_id`, `part_of`, full text on content |
-| `memories` | memories, one row per version | `valid_from`, `valid_until`, `recorded_at`, full text, vector |
-| `entities` | places, actors, subjects and every declared kind, one table | `parent_id`, `type` |
-| `involvements` | record, version, entity, role (places, participants, subjects and `involves` alike) | `(entity_id, role)`, `(record_id)` |
-| `profiles` | declared vocabularies, versioned | `(name, version)` |
-| `evidence` | memory, version, event, role | `(event_id)`, `(memory_id)` |
-| `appraisals` | judgements | `(target_id, at)`, source unique |
-| `links` | typed relations | `(from_id, type)`, `(to_id, type)`, source unique |
-| `cue_counts` | how many records each cue touches | refreshed by `maintain/graph.go`, used for rarity |
-| `identities` | platform handles to actors | `(workspace_id, platform, handle)` unique |
-| `dependencies` | memory version, input, version of the input read | `(input_id)` |
-| `rehearsals` | each use of a memory, by whom and when | `(memory_id, principal, recorded_at)` |
+`compose.yaml` runs the service and PostgreSQL. `memoryd` applies pending migrations on startup. The operator commands configure authentication and access before clients write records.
 
-Every record row (each memory version on its own) has a `bucket_id` and a `requires` array: the buckets someone must be able to read to read it (SPEC §13.3). Reading is one predicate, `requires <@ readable`, on a GIN index, so the rule is checked without walking links or dependencies.
-
-Attributes are a JSONB column on records and entities. When a profile marks an attribute filterable, the engine creates an expression index for that key, so a new field becomes fast to filter on without a code change.
-
-Nesting (place inside place, subject inside subject) is stored as a parent column and queried with recursive CTEs. If those get slow, a materialised path column replaces them.
-
-An id names exactly one record in a workspace. `record_ids` enforces it across tables, so a reference never needs to say which table it points into, and capture can check that each reference points at the kind its field asks for (a `by` at an actor, a `place` at a place).
-
-Both clocks are columns on `memories`: `valid_from` / `valid_until` for the world, `recorded_at` / `superseded_at` for the store. `as_of` recall filters on the second pair. A memory's involvements and evidence are kept per version, so an earlier version keeps the people and events it was tied to.
-
-## 5. Write path
-
-```
- client ─► api ─► capture.ingest
-                    ├── validate (record, profile attributes and dimensions)
-                    ├── check references (present, readable, and of the right kind)
-                    └── store.Write, one transaction
-                          ├── check every bucket written into is writable
-                          ├── lock every id and source the batch touches
-                          ├── dedupe on workspace, source system, installation, native id
-                          ├── rewrite references to the stored ids
-                          ├── work out each record's requirement set
-                          ├── write
-                          └── queue: embed, cue counts
-```
-
-Locks are taken in sorted order, so two batches touching the same records wait for each other rather than deadlocking or racing to insert the same source twice. Deduplication finishes before any reference is rewritten, so the result does not depend on the order of records in a batch. Requirement sets are worked out after that: a record's own bucket, joined with the sets of what it is made from, judges or links, read as stored when outside the batch, and with everything its memory's current version required.
-
-Writes return once the transaction commits. Embedding and cue counts follow shortly after, and recall works without them (the lexical and cue sources still answer).
-
-## 6. How an application uses it
-
-```
- application                         memory service
- ───────────                         ──────────────
- its own objects (what it shows,
- edits, reviews) ─── write ───────►  events + memories
-                                     (application keeps its ids in source.native_id)
-
- a screen or agent needs context
- ─── recall(context) ─────────────►  ranked, explained records
- ◄──────────────────────────────────
- result used ─── rehearse(id) ────►  recall count, last recalled
-```
-
-The application keeps its own model and screens. The memory service is where its events and memories are also written, and where it asks what to bring back.
-
-## 7. Testing
-
-- **record, appraise, recall/signals, recall/rank**: unit tests on plain values.
-- **store/postgres**: tests against a real PostgreSQL in a container, migrations up and down.
-- **api**: tests over HTTP, the same boundary clients use.
-- **conformance**: the spec's eight questions against a fixed fixture world. A change that alters an expected answer changes the spec, and is reviewed as one.
-- **recall quality**: a held out set of real (anonymised) contexts and the records a person said were right, scored as recall at 10 and mean reciprocal rank, run before any change to weights or signals.
-
-## 8. Order of work
-
-Done:
-
-1. `record`, `profile` (with the core profile) and `spec/schema`: types and JSON Schema agree on the spec's examples; validation.
-2. `store/postgres` with migrations; `capture` without embeddings.
-3. `recall` with lexical and cue sources only, `explain` from day one.
-4. Storage boundary (below).
-
-Next. Access (SPEC §13) comes before anything serves real data, because a service with no access rule has nothing safe to serve:
-
-4. Storage boundary: workspace and bucket on every table; ids, source dedupe, identities and locks scoped to the workspace; a requirement set stored with every record and memory version; an authorization context every store method requires, kept apart from search filters, failing closed when absent.
-5. `access`: service credentials, trusted issuers and token checks, principals, roles, groups, grants by origin, delegations, account links, extraction sessions, the settings in SPEC §13.9. In place for the first connector: service credentials, trusted issuers and token checks, principals made on first sign-in, account links proven by the issuer, manual grants, synced readers that lapse, and a record of every change. Left: roles, groups, delegations, open mode, extraction sessions and the remaining settings.
-6. Capture and direct reads under the read rule (SPEC §13.3): dedupe, reference checks and errors reveal nothing hidden. Done with step 4: reads by id, reference checks, dedupe, taken ids, and references to hidden records removed from what is returned.
-7. Recall under the read rule: one permission snapshot from candidates to response, hidden references removed from returned records, use kept per principal. Released only when two stores that differ only in records a principal may not read give that principal identical answers, and when a benchmark with thousands of buckets holds. In place with step 4: the read rule in every candidate query, walk and count, hidden references removed, use per principal, and the identical answers test. Left: the benchmark.
-8. `cmd/memoryd` and the HTTP API, with its own Postgres (pgvector) in a compose file. In place: write, read by id, recall, use, binding a bucket and syncing its readers; operator commands for workspaces, services, issuers and grants. Left: the OpenAPI document and the Go client.
-9. `embed` and the semantic source, under the same read rule.
-10. First connector and client: SourceAnt as a trusted issuer, a GitHub connector (one bucket per repository, collaborators synced as readers, records it cannot place in quarantine), the client and backfill.
-
-What recall answers at the end of step 10: SPEC §12.1, the `relevance` (lexical and semantic), `cue` and `recency` signals of §12.2, §12.4, §12.6 and §12.7, reading contradiction links that exist and the principal may read. Not yet: spreading (§12.3), the `importance`, `affect`, `authority` and `validity` signals, detecting contradictions, and the questions in §12.5 that need them.
-
-Later: `conformance` fixtures and the questions in SPEC §12.5, `spread`, `maintain`, publishing and the rest of SPEC §13.10.
-
-Each step ships something that can be tested on its own.
+HTTP tests exercise writes, listings, direct reads, recall, use and permissions through the public boundary. Storage tests isolate each database test in a fresh schema and check migration rollback and reapplication. Record and profile tests check the published schemas and examples.

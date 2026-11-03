@@ -3,6 +3,7 @@ package record
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // Problem is one rule a record breaks.
@@ -108,6 +109,9 @@ func (e Event) Validate() Problems {
 	c.id("id", e.ID)
 	c.id("bucket", e.Bucket)
 	c.typ("type", e.Type)
+	if utf8.RuneCountInString(e.Why) > 8192 {
+		c.add("why", "must be at most 8192 characters")
+	}
 	c.order("ended_at", e.OccurredAt, e.EndedAt)
 	c.participants("participants", e.Participants)
 	c.subjects("subjects", e.Subjects)
@@ -127,44 +131,6 @@ func (e Event) Validate() Problems {
 	return c.found
 }
 
-// Validate checks the rules the spec states for a memory.
-func (m Memory) Validate() Problems {
-	var c check
-	c.id("id", m.ID)
-	c.id("bucket", m.Bucket)
-	c.typ("type", m.Type)
-	if strings.TrimSpace(m.Statement) == "" {
-		c.add("statement", "is required")
-	}
-	c.order("valid_until", m.ValidFrom, m.ValidUntil)
-	c.unit("confidence", m.Confidence)
-	for i, ev := range m.Evidence {
-		at := fmt.Sprintf("evidence[%d]", i)
-		c.id(at+".event", ev.Event)
-		if !ev.Role.valid() {
-			c.add(at+".role", "%q is not one of established, reinforced, refined, contradicted, retired", ev.Role)
-		}
-	}
-	for i, d := range m.DependsOn {
-		at := fmt.Sprintf("depends_on[%d]", i)
-		c.id(at+".record", d.Record)
-		if d.Version < 0 {
-			c.add(at+".version", "cannot be negative")
-		}
-		if d.Record != "" && d.Record == m.ID {
-			c.add(at+".record", "a memory cannot be made from itself")
-		}
-	}
-	c.participants("participants", m.Participants)
-	c.subjects("subjects", m.Subjects)
-	c.involves("involves", m.Involves)
-	if m.Recall != nil && m.Recall.Count < 0 {
-		c.add("recall.count", "cannot be negative")
-	}
-	c.attributes("attributes", m.Attributes)
-	return c.found
-}
-
 // Validate checks the rules the spec states for an entity.
 func (e Entity) Validate() Problems {
 	var c check
@@ -174,10 +140,10 @@ func (e Entity) Validate() Problems {
 	switch e.Class {
 	case "", PlaceClass, ActorClass, SubjectClass:
 	default:
-		c.add("class", "%q is not place, actor or subject; leave it out for a kind a profile declares", e.Class)
+		c.add("class", "%q is not place, actor or subject; leave it out for a type a profile declares", e.Class)
 	}
 	if e.Class == "" && !e.Type.Namespaced() {
-		c.add("type", "a kind declared by a profile has a namespaced type, like crm.deal")
+		c.add("type", "a type declared by a profile has a namespaced type, like crm.deal")
 	}
 	if e.Parent != "" && e.Parent == e.ID {
 		c.add("parent", "an entity cannot be its own parent")

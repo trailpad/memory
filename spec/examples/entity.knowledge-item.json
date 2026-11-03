@@ -1,0 +1,7 @@
+{
+  "bucket": "bk_shop",
+  "id": "sb_retry_policy",
+  "class": "subject",
+  "type": "knowledge.item",
+  "name": "Retry policy"
+}

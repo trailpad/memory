@@ -24,7 +24,6 @@ var ErrMove = errors.New("records cannot move between buckets")
 // never widen it. The zero value reads and writes nothing.
 type Access struct {
 	Workspace string
-	// Principal is whose uses of a memory are counted and recorded.
 	Principal string
 	// Read is every bucket the principal may read. A record is readable when
 	// every bucket in its requirement set is here.

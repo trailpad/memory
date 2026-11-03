@@ -16,7 +16,6 @@ const PlainCueWeight = 0.5
 // to it.
 const MaxCueWeight = 1.0
 
-// DefaultHalfLifeDays is how fast a memory of an undeclared type fades.
 const DefaultHalfLifeDays = 365
 
 // Resolver answers questions about types, roles and attributes using one set
@@ -72,17 +71,6 @@ func parent(t record.Type) record.Type {
 	return t[:i]
 }
 
-func (r *Resolver) memoryType(t record.Type) (MemoryType, bool) {
-	for _, p := range r.profiles {
-		for _, m := range p.MemoryTypes {
-			if m.Type == t {
-				return m, true
-			}
-		}
-	}
-	return MemoryType{}, false
-}
-
 func (r *Resolver) eventType(t record.Type) (EventType, bool) {
 	for _, p := range r.profiles {
 		for _, e := range p.EventTypes {
@@ -95,6 +83,9 @@ func (r *Resolver) eventType(t record.Type) (EventType, bool) {
 }
 
 func (r *Resolver) entityType(t record.Type) (EntityType, bool) {
+	if t == "team" {
+		t = "group"
+	}
 	for _, p := range r.profiles {
 		for _, e := range p.EntityTypes {
 			if e.Type == t {
@@ -105,21 +96,13 @@ func (r *Resolver) entityType(t record.Type) (EntityType, bool) {
 	return EntityType{}, false
 }
 
-// HalfLifeDays is how fast a memory of this type fades, from the nearest
-// declaration that says.
 func (r *Resolver) HalfLifeDays(t record.Type) float64 {
-	for _, m := range chain(t, r.memoryType, func(m MemoryType) record.Type { return m.FallsBackTo }) {
+	for _, m := range chain(t, r.eventType, func(m EventType) record.Type { return m.FallsBackTo }) {
 		if m.HalfLifeDays > 0 {
 			return m.HalfLifeDays
 		}
 	}
 	return DefaultHalfLifeDays
-}
-
-// KnownMemoryType reports whether the type, or something it falls back to,
-// is declared.
-func (r *Resolver) KnownMemoryType(t record.Type) bool {
-	return len(chain(t, r.memoryType, func(m MemoryType) record.Type { return m.FallsBackTo })) > 0
 }
 
 // EventIcon is the icon for an event type, from the nearest declaration.
@@ -238,16 +221,6 @@ func (r *Resolver) scaleFor(key record.Type) ([]int, bool) {
 func firstLine(err error) string {
 	lines := strings.Split(strings.TrimSpace(err.Error()), "\n")
 	return strings.TrimLeft(strings.TrimSpace(lines[len(lines)-1]), "- ")
-}
-
-// MemoryLineage is a memory type followed by every type it falls back to:
-// declared fallbacks, which may cross into another profile, and namespace
-// parents.
-func (r *Resolver) MemoryLineage(t record.Type) []record.Type {
-	return lineage(t, func(t record.Type) record.Type {
-		m, _ := r.memoryType(t)
-		return m.FallsBackTo
-	})
 }
 
 // EventLineage is the same for an event type.

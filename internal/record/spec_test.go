@@ -18,12 +18,12 @@ import (
 func schemas(t *testing.T) map[string]*jsonschema.Schema {
 	t.Helper()
 	out := map[string]*jsonschema.Schema{}
-	for _, kind := range []string{"event", "memory", "entity", "appraisal", "link", "profile"} {
-		s, err := spec.Schema(kind)
+	for _, recordType := range []string{"event", "entity", "appraisal", "link", "profile"} {
+		s, err := spec.Schema(recordType)
 		if err != nil {
 			t.Fatal(err)
 		}
-		out[kind] = s
+		out[recordType] = s
 	}
 	return out
 }
@@ -32,13 +32,11 @@ type validator interface{ Validate() record.Problems }
 
 // decode reads a record strictly, so a field the spec shows but the Go type
 // lacks fails instead of disappearing.
-func decode(kind string, raw []byte) (validator, error) {
+func decode(recordType string, raw []byte) (validator, error) {
 	var into validator
-	switch kind {
+	switch recordType {
 	case "event":
 		into = &record.Event{}
-	case "memory":
-		into = &record.Memory{}
 	case "entity":
 		into = &record.Entity{}
 	case "appraisal":
@@ -56,8 +54,6 @@ func decode(kind string, raw []byte) (validator, error) {
 	switch v := into.(type) {
 	case *record.Event:
 		return *v, nil
-	case *record.Memory:
-		return *v, nil
 	case *record.Entity:
 		return *v, nil
 	case *record.Appraisal:
@@ -68,10 +64,10 @@ func decode(kind string, raw []byte) (validator, error) {
 	return nil, nil
 }
 
-func kindOf(file string) string {
+func recordTypeOf(file string) string {
 	name := filepath.Base(file)
-	kind, _, _ := strings.Cut(strings.TrimSuffix(name, ".json"), ".")
-	return kind
+	recordType, _, _ := strings.Cut(strings.TrimSuffix(name, ".json"), ".")
+	return recordType
 }
 
 func instance(t *testing.T, raw []byte) any {
@@ -95,21 +91,21 @@ func TestSpecExamplesPassSchemaAndGo(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			kind := kindOf(f)
-			schema, ok := compiled[kind]
+			recordType := recordTypeOf(f)
+			schema, ok := compiled[recordType]
 			if !ok {
-				t.Fatalf("no schema for %s", kind)
+				t.Fatalf("no schema for %s", recordType)
 			}
 			if err := schema.Validate(instance(t, raw)); err != nil {
 				t.Fatalf("schema refuses the spec's own example: %v", err)
 			}
-			if kind == "profile" {
+			if recordType == "profile" {
 				if _, err := profile.Parse(raw); err != nil {
 					t.Fatalf("Go refuses the spec's own example: %v", err)
 				}
 				return
 			}
-			rec, err := decode(kind, raw)
+			rec, err := decode(recordType, raw)
 			if err != nil {
 				t.Fatalf("Go refuses the spec's own example: %v", err)
 			}
@@ -143,15 +139,7 @@ func TestSchemaAndGoRefuseTheSameRecords(t *testing.T) {
 		{"attribute key without namespace", "event.meeting.json", func(m map[string]any) {
 			m["attributes"] = map[string]any{"amount": 3}
 		}},
-		{"memory without statement", "memory.retry-limit.json", func(m map[string]any) { delete(m, "statement") }},
-		{"confidence above one", "memory.retry-limit.json", func(m map[string]any) { m["confidence"] = 1.5 }},
-		{"unknown evidence role", "memory.retry-limit.json", func(m map[string]any) {
-			m["evidence"] = []any{map[string]any{"event": "ev_01J", "role": "maybe"}}
-		}},
-		{"negative recall count", "memory.retry-limit.json", func(m map[string]any) {
-			m["recall"] = map[string]any{"count": -1}
-		}},
-		{"declared kind without namespace", "entity.deal.json", func(m map[string]any) { m["type"] = "deal" }},
+		{"declared type without namespace", "entity.deal.json", func(m map[string]any) { m["type"] = "deal" }},
 		{"unknown class", "entity.place.json", func(m map[string]any) { m["class"] = "room" }},
 		{"identity without handle", "entity.actor.json", func(m map[string]any) {
 			m["identities"] = []any{map[string]any{"platform": "github"}}
@@ -205,9 +193,9 @@ func TestSchemaAndGoRefuseTheSameRecords(t *testing.T) {
 			}
 			c.change(m)
 			broken, _ := json.Marshal(m)
-			kind := kindOf(c.file)
+			recordType := recordTypeOf(c.file)
 
-			if kind == "profile" {
+			if recordType == "profile" {
 				// A profile from another namespace is valid JSON; owning names
 				// is a rule only Go can check.
 				if _, err := profile.Parse(broken); err == nil {
@@ -215,10 +203,10 @@ func TestSchemaAndGoRefuseTheSameRecords(t *testing.T) {
 				}
 				return
 			}
-			if err := compiled[kind].Validate(instance(t, broken)); err == nil {
+			if err := compiled[recordType].Validate(instance(t, broken)); err == nil {
 				t.Error("schema accepts it")
 			}
-			rec, err := decode(kind, broken)
+			rec, err := decode(recordType, broken)
 			if err == nil && len(rec.Validate()) == 0 {
 				t.Error("Go accepts it")
 			}
@@ -237,9 +225,6 @@ func TestRulesOnlyGoChecks(t *testing.T) {
 		{"meeting ends before it starts", "event.meeting.json", func(m map[string]any) {
 			m["ended_at"] = "2026-04-21T08:00:00Z"
 		}, "ended_at"},
-		{"memory stops holding before it starts", "memory.retry-limit.json", func(m map[string]any) {
-			m["valid_until"] = "2026-01-01T00:00:00Z"
-		}, "valid_until"},
 		{"event part of itself", "event.review-comment.json", func(m map[string]any) { m["part_of"] = m["id"] }, "part_of"},
 		{"entity its own parent", "entity.subject.json", func(m map[string]any) { m["parent"] = m["id"] }, "parent"},
 		{"link to itself", "link.json", func(m map[string]any) { m["to"] = m["from"] }, "to"},
@@ -251,7 +236,7 @@ func TestRulesOnlyGoChecks(t *testing.T) {
 			_ = json.Unmarshal(raw, &m)
 			c.change(m)
 			broken, _ := json.Marshal(m)
-			rec, err := decode(kindOf(c.file), broken)
+			rec, err := decode(recordTypeOf(c.file), broken)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -260,5 +245,39 @@ func TestRulesOnlyGoChecks(t *testing.T) {
 				t.Fatalf("want one problem on %s, got %v", c.field, problems)
 			}
 		})
+	}
+}
+
+func TestActorTypesPassSchemaAndValidation(t *testing.T) {
+	for _, typ := range []record.Type{"person", "agent", "bot", "service", "group", "organisation", "team"} {
+		t.Run(string(typ), func(t *testing.T) {
+			entity := record.Entity{Bucket: "bk", ID: "ac", Class: record.ActorClass, Type: typ}
+			raw, err := json.Marshal(entity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := spec.Validate("entity", raw); err != nil {
+				t.Fatal(err)
+			}
+			if problems := entity.Validate(); len(problems) != 0 {
+				t.Fatal(problems)
+			}
+		})
+	}
+}
+
+func TestOnBehalfOfPassesSchemaAndValidation(t *testing.T) {
+	event := record.Event{Bucket: "bk", ID: "ev", Type: "knowledge.updated", Participants: []record.Participant{
+		{Actor: "ac_agent", Role: record.Author}, {Actor: "ac_person", Role: record.OnBehalfOf},
+	}}
+	raw, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := spec.Validate("event", raw); err != nil {
+		t.Fatal(err)
+	}
+	if problems := event.Validate(); len(problems) != 0 {
+		t.Fatal(problems)
 	}
 }

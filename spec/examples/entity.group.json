@@ -1,0 +1,7 @@
+{
+  "bucket": "bk_shop",
+  "id": "ac_group_payments",
+  "class": "actor",
+  "type": "group",
+  "name": "Payments"
+}

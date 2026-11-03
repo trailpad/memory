@@ -2,11 +2,8 @@ package postgres_test
 
 import (
 	"context"
-	"errors"
-	"strings"
 	"testing"
 
-	"github.com/trailpad/memory/internal/store"
 	"github.com/trailpad/memory/internal/store/postgres"
 	"github.com/trailpad/memory/internal/store/postgres/pgtest"
 )
@@ -23,7 +20,17 @@ func exists(t *testing.T, s *postgres.Store, table string) bool {
 func TestMigrationsGoDownAndBackUp(t *testing.T) {
 	s := pgtest.ForTest(t)
 	ctx := context.Background()
-	// Each migration in turn, latest first, with a table it adds.
+	if err := s.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"memories", "evidence", "dependencies"} {
+		if !exists(t, s, table) {
+			t.Fatalf("rollback did not recreate %s", table)
+		}
+	}
 	for _, table := range []string{"principals", "workspaces", "rehearsals", "record_ids"} {
 		if err := s.Rollback(ctx); err != nil {
 			t.Fatalf("rolling back %s: %v", table, err)
@@ -35,81 +42,117 @@ func TestMigrationsGoDownAndBackUp(t *testing.T) {
 	if err := s.Migrate(ctx); err != nil {
 		t.Fatalf("up again: %v", err)
 	}
-	for _, table := range []string{"record_ids", "rehearsals", "workspaces", "dependencies", "principals", "grants"} {
+	for _, table := range []string{"record_ids", "rehearsals", "workspaces", "principals", "grants"} {
 		if !exists(t, s, table) {
 			t.Fatalf("%s is missing after migrating again", table)
 		}
 	}
 }
 
-// legacy rolls back to before workspaces and stores one memory used three
-// times, as the counters before rehearsals kept it.
-func legacy(t *testing.T) *postgres.Store {
-	t.Helper()
+func TestEpisodicMigrationPreservesEvents(t *testing.T) {
 	s := pgtest.ForTest(t)
-	ctx := context.Background()
-	for range 3 {
-		if err := s.Rollback(ctx); err != nil {
-			t.Fatal(err)
-		}
+	ctx := t.Context()
+	if err := s.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Rollback(ctx); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := s.Pool().Exec(ctx, `
-		insert into record_ids (id, kind) values ('mm_x', 'memory');
-		insert into memories (id, version, type, statement, body, said, recorded_at, recall_count, last_recalled_at)
-		values ('mm_x', 1, 'crm.objection', 'x', '{"id":"mm_x","type":"crm.objection","statement":"x"}', to_tsvector('x'), now(), 3, '2026-09-01T00:00:00Z')`); err != nil {
+ insert into record_ids (workspace_id, id, kind) values ('default', 'ev_legacy', 'event'), ('default', 'mm_legacy', 'memory');
+ insert into events (workspace_id, id, type, body, said, recorded_at, bucket_id, requires)
+ values ('default', 'ev_legacy', 'meeting', '{"bucket":"quarantine","id":"ev_legacy","type":"meeting","appraisals":["ap_later"]}', to_tsvector('meeting'), now(), 'quarantine', '{quarantine}');
+ insert into memories (workspace_id, id, version, type, statement, body, said, recorded_at, bucket_id, requires)
+ values ('default', 'mm_legacy', 1, 'fact', 'old fact', '{}', to_tsvector('old fact'), now(), 'quarantine', '{quarantine}');
+ insert into evidence (workspace_id, memory_id, version, event_id, role) values ('default', 'mm_legacy', 1, 'ev_legacy', 'established');
+ insert into dependencies (workspace_id, memory_id, version, input_id) values ('default', 'mm_legacy', 1, 'ev_legacy');
+ insert into rehearsals (workspace_id, memory_id, principal, at) values ('default', 'mm_legacy', 'reader', now());`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	return s
-}
-
-func TestUsesCountedBeforeTheUpgradeAreKept(t *testing.T) {
-	s := legacy(t)
-	ctx := context.Background()
-	var uses int
-	var last string
-	if err := s.Pool().QueryRow(ctx, `select count(*), max(at)::date::text from rehearsals where memory_id = 'mm_x'`).Scan(&uses, &last); err != nil {
+	for _, table := range []string{"memories", "evidence", "dependencies"} {
+		if exists(t, s, table) {
+			t.Fatalf("%s remains", table)
+		}
+	}
+	var body string
+	if err := s.Pool().QueryRow(ctx, `select body::text from events where workspace_id = 'default' and id = 'ev_legacy'`).Scan(&body); err != nil {
 		t.Fatal(err)
 	}
-	if uses != 3 || last != "2026-09-01" {
-		t.Fatalf("three uses, the last on 1 September, got %d on %s", uses, last)
+	if body != `{"id": "ev_legacy", "type": "meeting", "bucket": "quarantine"}` {
+		t.Fatalf("event body: %s", body)
 	}
-	var lineage []string
-	if err := s.Pool().QueryRow(ctx, `select type_lineage from memories where id = 'mm_x'`).Scan(&lineage); err != nil {
+	var records, uses int
+	if err := s.Pool().QueryRow(ctx, `select (select count(*) from record_ids where record_type = 'memory'), (select count(*) from rehearsals)`).Scan(&records, &uses); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(lineage, " ") != "crm.objection crm" {
-		t.Fatalf("earlier rows get their namespace parents, got %v", lineage)
+	if records != 0 || uses != 0 {
+		t.Fatalf("semantic records: %d, uses: %d", records, uses)
 	}
-}
-
-func TestRecordsFromBeforeWorkspacesAreQuarantined(t *testing.T) {
-	s := legacy(t)
-	ctx := context.Background()
-	outside := store.Access{Workspace: "default", Principal: "pr_ana", Read: []string{"bk_anything"}}
-	if _, err := s.Memory(ctx, outside, "mm_x", nil); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("nobody established who may read it, so only quarantine readers see it, got %v", err)
-	}
-	inside := store.Access{Workspace: "default", Principal: "pr_admin", Read: []string{store.QuarantineBucket}}
-	m, err := s.Memory(ctx, inside, "mm_x", nil)
-	if err != nil {
+	if err := s.Rollback(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if m.Recall.Count != 0 {
-		t.Fatalf("uses counted before uses were kept per principal belong to nobody, got %d", m.Recall.Count)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func TestQuarantinedBodiesNameTheirBucket(t *testing.T) {
-	s := legacy(t)
-	inside := store.Access{Workspace: "default", Principal: "pr_admin", Read: []string{store.QuarantineBucket}}
-	m, err := s.Memory(context.Background(), inside, "mm_x", nil)
-	if err != nil {
+func TestRecordTypeMigrationRoundTrip(t *testing.T) {
+	s := pgtest.ForTest(t)
+	ctx := t.Context()
+	assertSchema := func(column, constraint string) {
+		t.Helper()
+		for _, table := range []string{"record_ids", "involvements"} {
+			name := column
+			var columns, constraints int
+			if err := s.Pool().QueryRow(ctx, `select count(*) from information_schema.columns where table_schema = current_schema() and table_name = $1 and column_name = $2`, table, name).Scan(&columns); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Pool().QueryRow(ctx, `select count(*) from pg_constraint where conrelid = to_regclass($1) and conname = $2`, table, table+"_"+constraint+"_check").Scan(&constraints); err != nil {
+				t.Fatal(err)
+			}
+			if columns != 1 || constraints != 1 {
+				t.Fatalf("%s: columns=%d constraints=%d", table, columns, constraints)
+			}
+		}
+	}
+	assertSchema("record_type", "record_type")
+	if _, err := s.Pool().Exec(ctx, `insert into record_ids (workspace_id, id, record_type) values ('default', 'ev_preserved', 'event')`); err != nil {
 		t.Fatal(err)
 	}
-	if m.Bucket != store.QuarantineBucket {
-		t.Fatalf("a migrated record reads back in quarantine, got %q", m.Bucket)
+	if err := s.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var column string
+	if err := s.Pool().QueryRow(ctx, `select kind from record_ids where id = 'ev_preserved'`).Scan(&column); err != nil {
+		t.Fatal(err)
+	}
+	if column != "event" {
+		t.Fatalf("record type: %s", column)
+	}
+	for _, table := range []string{"record_ids", "involvements"} {
+		suffix := "kind"
+		if table == "involvements" {
+			suffix = "record_kind"
+		}
+		var found bool
+		if err := s.Pool().QueryRow(ctx, `select exists (select 1 from pg_constraint where conrelid = to_regclass($1) and conname = $2)`, table, table+"_"+suffix+"_check").Scan(&found); err != nil {
+			t.Fatal(err)
+		}
+		if !found {
+			t.Fatalf("original constraint missing on %s", table)
+		}
+	}
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertSchema("record_type", "record_type")
+	if err := s.Pool().QueryRow(ctx, `select record_type from record_ids where id = 'ev_preserved'`).Scan(&column); err != nil {
+		t.Fatal(err)
+	}
+	if column != "event" {
+		t.Fatalf("record type: %s", column)
 	}
 }

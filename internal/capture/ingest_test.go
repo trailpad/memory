@@ -80,7 +80,7 @@ func specWorld(t *testing.T) store.Batch {
 			entity("pl_pr_4521", record.PlaceClass, "github.pull_request"),
 			example[record.Entity](t, "entity.place.json"),
 			entity("pl_payments_weekly", record.PlaceClass, "meeting"),
-			entity("ac_team_payments", record.ActorClass, "team"),
+			example[record.Entity](t, "entity.group.json"),
 			example[record.Entity](t, "entity.actor.json"),
 			entity("ac_ben", record.ActorClass, "person"),
 			entity("ac_review_bot", record.ActorClass, "bot"),

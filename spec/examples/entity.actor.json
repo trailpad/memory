@@ -10,5 +10,5 @@
     { "platform": "slack", "handle": "U02ABC" },
     { "platform": "email", "handle": "ana@acme.example" }
   ],
-  "member_of": ["ac_team_payments"]
+  "member_of": ["ac_group_payments"]
 }

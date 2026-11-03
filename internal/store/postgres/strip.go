@@ -10,6 +10,9 @@ import (
 func (s *Store) strip(ctx context.Context, access store.Access, entities []*record.Entity, events []*record.Event) error {
 	var refs []record.Ref
 	for _, e := range entities {
+		if e.Class == record.ActorClass && e.Type == "team" {
+			e.Type = "group"
+		}
 		refs = append(refs, e.Refs()...)
 	}
 	for _, e := range events {

@@ -3,9 +3,10 @@
   "version": "1",
   "entity_types": [
     {"type": "person", "class": "actor", "icon": "person"},
-    {"type": "team", "class": "actor", "icon": "people"},
+    {"type": "group", "class": "actor", "icon": "people"},
     {"type": "agent", "class": "actor", "icon": "sparkle"},
     {"type": "bot", "class": "actor", "icon": "robot"},
+    {"type": "service", "class": "actor", "icon": "server"},
     {"type": "organisation", "class": "actor", "icon": "building"},
     {
       "type": "meeting",
@@ -31,6 +32,7 @@
     {"role": "about", "cue_weight": 0.8},
     {"role": "reviewer", "cue_weight": 0.7},
     {"role": "assignee", "cue_weight": 0.7},
+    {"role": "on_behalf_of", "cue_weight": 0.7},
     {"role": "affected", "cue_weight": 0.6},
     {"role": "addressee", "cue_weight": 0.5},
     {"role": "present", "cue_weight": 0.4},

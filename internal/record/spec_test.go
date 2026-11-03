@@ -139,7 +139,7 @@ func TestSchemaAndGoRefuseTheSameRecords(t *testing.T) {
 		{"attribute key without namespace", "event.meeting.json", func(m map[string]any) {
 			m["attributes"] = map[string]any{"amount": 3}
 		}},
-		{"declared kind without namespace", "entity.deal.json", func(m map[string]any) { m["type"] = "deal" }},
+		{"declared type without namespace", "entity.deal.json", func(m map[string]any) { m["type"] = "deal" }},
 		{"unknown class", "entity.place.json", func(m map[string]any) { m["class"] = "room" }},
 		{"identity without handle", "entity.actor.json", func(m map[string]any) {
 			m["identities"] = []any{map[string]any{"platform": "github"}}
@@ -245,5 +245,39 @@ func TestRulesOnlyGoChecks(t *testing.T) {
 				t.Fatalf("want one problem on %s, got %v", c.field, problems)
 			}
 		})
+	}
+}
+
+func TestActorTypesPassSchemaAndValidation(t *testing.T) {
+	for _, typ := range []record.Type{"person", "agent", "bot", "service", "group", "organisation", "team"} {
+		t.Run(string(typ), func(t *testing.T) {
+			entity := record.Entity{Bucket: "bk", ID: "ac", Class: record.ActorClass, Type: typ}
+			raw, err := json.Marshal(entity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := spec.Validate("entity", raw); err != nil {
+				t.Fatal(err)
+			}
+			if problems := entity.Validate(); len(problems) != 0 {
+				t.Fatal(problems)
+			}
+		})
+	}
+}
+
+func TestOnBehalfOfPassesSchemaAndValidation(t *testing.T) {
+	event := record.Event{Bucket: "bk", ID: "ev", Type: "knowledge.updated", Participants: []record.Participant{
+		{Actor: "ac_agent", Role: record.Author}, {Actor: "ac_person", Role: record.OnBehalfOf},
+	}}
+	raw, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := spec.Validate("event", raw); err != nil {
+		t.Fatal(err)
+	}
+	if problems := event.Validate(); len(problems) != 0 {
+		t.Fatal(problems)
 	}
 }

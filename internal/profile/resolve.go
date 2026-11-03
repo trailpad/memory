@@ -83,6 +83,9 @@ func (r *Resolver) eventType(t record.Type) (EventType, bool) {
 }
 
 func (r *Resolver) entityType(t record.Type) (EntityType, bool) {
+	if t == "team" {
+		t = "group"
+	}
 	for _, p := range r.profiles {
 		for _, e := range p.EntityTypes {
 			if e.Type == t {

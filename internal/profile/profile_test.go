@@ -189,3 +189,43 @@ func TestTheRegistryServesWhileProfilesArrive(t *testing.T) {
 	}
 	<-done
 }
+
+func TestCoreActorVocabulary(t *testing.T) {
+	registry := profile.NewRegistry()
+	core, ok := registry.Get("core@1")
+	if !ok {
+		t.Fatal("core profile missing")
+	}
+	want := map[record.Type]string{
+		"person": "person", "agent": "sparkle", "bot": "robot",
+		"service": "server", "group": "people", "organisation": "building",
+	}
+	count := 0
+	for _, entity := range core.EntityTypes {
+		if entity.Type == "team" {
+			t.Fatal("team must not be advertised")
+		}
+		if entity.Class != record.ActorClass {
+			continue
+		}
+		count++
+		if icon, ok := want[entity.Type]; !ok || entity.Icon != icon {
+			t.Errorf("unexpected actor declaration: %+v", entity)
+		}
+	}
+	if count != len(want) {
+		t.Fatalf("want %d actor types, got %d", len(want), count)
+	}
+	resolver := registry.Resolver()
+	for typ, icon := range want {
+		if got := resolver.EntityIcon(typ); got != icon {
+			t.Errorf("%s icon = %s, want %s", typ, got, icon)
+		}
+	}
+	if got := resolver.EntityIcon("team"); got != want["group"] {
+		t.Fatalf("team alias icon = %s", got)
+	}
+	if got := resolver.CueWeight(record.OnBehalfOf); got != 0.7 {
+		t.Fatalf("on_behalf_of weight = %v", got)
+	}
+}

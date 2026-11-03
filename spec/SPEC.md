@@ -12,9 +12,9 @@ Every record has an opaque `id` and a `bucket`. IDs are unique within a workspac
 
 Absent fields mean unknown. In particular, no appraisal means unjudged, never neutral.
 
-Times are RFC 3339 with an offset. A precise time is a string. An imprecise time is an object such as `{"at":"2026-03-01T00:00:00Z","precision":"month"}`. Precision is `second`, `minute`, `day`, `month` or `year`.
+Times are [RFC 3339](https://www.rfc-editor.org/rfc/rfc3339#section-5.6) with an offset. A precise time is a string. An imprecise time is an object such as `{"at":"2026-03-01T00:00:00Z","precision":"month"}`. Precision is `second`, `minute`, `day`, `month` or `year`.
 
-Schemas are in `schema/` and standalone records are in `examples/`.
+Schemas use [JSON Schema Draft 2020-12](https://json-schema.org/draft/2020-12/json-schema-core) and are in `schema/`. Standalone records are in `examples/`.
 
 ## Event
 
@@ -53,7 +53,9 @@ Write appraisals separately in the batch's `appraisals` array. Event appraisal a
 
 A meeting is an event with an end time and participants with role `present`. Its utterances are child events whose `part_of` points at it. The same structure covers a review round, thread, session or incident.
 
-Roles include `author`, `speaker`, `addressee`, `decider`, `approver`, `reviewer`, `assignee`, `present`, `mentioned`, `affected`, `observer` and `about`. A role affects cue weight: a decider is a stronger cue than someone merely mentioned.
+Roles include `author`, `speaker`, `addressee`, `decider`, `approver`, `reviewer`, `assignee`, `present`, `mentioned`, `affected`, `observer`, `about` and `on_behalf_of`. The `on_behalf_of` participant identifies the actor another participant acted for. Record both the acting participant (for example, an agent as `author`) and the represented actor as `on_behalf_of`. This role describes participation and grants no access.
+
+A role affects cue weight: a decider is a stronger cue than someone merely mentioned.
 
 ## Entities
 
@@ -63,7 +65,22 @@ All entities have `bucket`, `id` and `type`. Optional fields include `name`, `pa
 
 Places may carry `audience` and `medium`. Audience describes the source audience and grants no access. Medium has optional `sync`, `formality` (`casual`, `work`, `formal`, `binding`) and `record` (`written`, `transcribed`, `recalled`).
 
-Actors may carry `identities` (platform and handle pairs) and `member_of` actor IDs. An actor describes who took part. It is separate from the authenticated principal and grants no access.
+Actors may carry `identities` (platform and handle pairs) and `member_of` actor IDs. An actor is anyone or anything that took part in an event, with the participant role saying how. It is separate from the authenticated principal and grants no access.
+
+The core actor types all have class `actor`:
+
+| Type | Meaning |
+|---|---|
+| `person` | An individual human. |
+| `agent` | Software acting on its own judgement, such as a coding agent. |
+| `bot` | A scripted account that follows fixed rules. |
+| `service` | A system that emits events, such as a calendar, CI pipeline or billing provider. |
+| `group` | A formal or informal collective of actors, such as a team, mailing list or chat user group. |
+| `organisation` | A company or institution. |
+
+These types align with the [W3C Activity Streams 2.0 actor types](https://www.w3.org/TR/activitystreams-vocabulary/#actor-types): `person` maps to `Person`, `group` to `Group`, `organisation` to `Organization`, `service` to `Service`, and both `agent` and `bot` to `Application`. The distinction between `agent` and `bot` preserves whether software exercises judgement or follows fixed rules.
+
+The legacy actor type `team` remains valid as an alias for `group`. Stored records retain their original data; entity reads, including entities returned by listings, return `group`. New integrations should write `group`.
 
 ## Source
 
@@ -115,7 +132,7 @@ Event type declarations support `falls_back_to`, `icon`, `medium` and `half_life
 
 ## HTTP contract
 
-Service requests authenticate with `Authorization: Bearer <service-key>`. A service acting for a person also sends a signed person token in `Memory-Person`.
+Service requests authenticate with `Authorization: Bearer <service-key>`, using the header syntax from [RFC 6750 section 2.1](https://www.rfc-editor.org/rfc/rfc6750#section-2.1). A service acting for a person also sends a signed person token in `Memory-Person`.
 
 | Method and path | Behavior |
 |---|---|
@@ -129,7 +146,7 @@ Service requests authenticate with `Authorization: Bearer <service-key>`. A serv
 | `PUT /v1/buckets` | Binds a source container to a bucket. |
 | `PUT /v1/buckets/{id}/readers` | Replaces source accounts allowed to read a bound bucket. |
 
-Batch writes return `stored`, a map from submitted to canonical IDs, and optional `unchanged` IDs. Rewriting an immutable record differently returns 409. Validation returns 422 with field problems. Hidden and missing records both return 404. Unknown request fields are rejected.
+Batch writes return `stored`, a map from submitted to canonical IDs, and optional `unchanged` IDs. Rewriting an immutable record differently returns 409. Validation returns 422 with field problems. Hidden and missing records both return 404. Unknown request fields are rejected. Status codes follow [HTTP Semantics, RFC 9110 section 15](https://www.rfc-editor.org/rfc/rfc9110#section-15).
 
 Event listings are ordered by occurrence time, then ID. `from` is inclusive and `to` exclusive. Optional filters are repeated `bucket`, `part_of`, and `top_level=true`. `top_level` cannot be combined with `part_of`. `limit` defaults to 200 and is at most 1000. `after` continues from an event ID. The response has `events`, `entities`, and optional `next` when the page is full. Undated events can be read by ID or recalled but are excluded from listings.
 
@@ -162,4 +179,4 @@ Every record stores a requirement set. Entities and events require their own buc
 
 Services authenticate with operator issued keys; only key hashes are stored. Credentials limit actions to `read`, `write` and `sync`. Operators create workspaces, services, trusted issuers and grants with `memoryd`. Installations restrict which source containers a service can bind. Binding grants that service access to its bucket. A service with no grants reads nothing.
 
-A client application can be a trusted issuer for people. Person tokens use Ed25519 signatures and must match the configured audience, workspace, issuer and service, with a valid expiry and bounded lifetime. Proven source accounts link to one principal. Synced source readers expire without refresh. Manual grants remain until revoked. Actor identities are descriptive and never serve as credentials.
+A client application can be a trusted issuer for people. Person tokens are [JSON Web Tokens (RFC 7519)](https://www.rfc-editor.org/rfc/rfc7519) and use Ed25519 signatures ([RFC 8032 section 5.1](https://www.rfc-editor.org/rfc/rfc8032#section-5.1)). Tokens must match the configured audience, workspace, issuer and service, with a valid expiry and bounded lifetime. Proven source accounts link to one principal. Synced source readers expire without refresh. Manual grants remain until revoked. Actor identities are descriptive and never serve as credentials.

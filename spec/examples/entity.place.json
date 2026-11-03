@@ -6,6 +6,6 @@
   "name": "Review thread on retry.go",
   "parent": "pl_pr_4521",
   "url": "https://github.com/acme/shop/pull/4521",
-  "audience": { "visibility": "team", "members": ["ac_ana", "ac_ben"] },
+  "audience": { "visibility": "group", "members": ["ac_ana", "ac_ben"] },
   "medium": { "sync": false, "formality": "work", "record": "written" }
 }

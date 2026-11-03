@@ -1,0 +1,10 @@
+{
+  "bucket": "bk_shop",
+  "id": "ev_delegated_update",
+  "type": "knowledge.updated",
+  "participants": [
+    {"actor": "ac_agent", "role": "author"},
+    {"actor": "ac_ana", "role": "on_behalf_of"}
+  ],
+  "content": [{"speaker": "ac_agent", "text": "Updated the retry policy."}]
+}

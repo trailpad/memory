@@ -1,14 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schema.trailpad.ai/memory/0.1/entity.json",
-  "title": "Entity: a place, actor, subject or a kind a profile declares",
+  "title": "Entity: a place, actor, subject or a type a profile declares",
   "type": "object",
   "required": ["bucket", "id", "type"],
   "properties": {
     "bucket": { "$ref": "common.json#/$defs/id" },
     "id": { "$ref": "common.json#/$defs/id" },
-    "class": { "enum": ["place", "actor", "subject"] },
-    "type": { "$ref": "common.json#/$defs/type" },
+    "class": { "description": "An actor is anyone or anything that took part in an event; its participant role says how. It is separate from the authenticated principal and grants no access.", "enum": ["place", "actor", "subject"] },
+    "type": { "description": "Core actor types: person (an individual human), agent (software acting on its own judgement), bot (a scripted account following fixed rules), service (an event-emitting system), group (a formal or informal collective of actors), organisation (a company or institution). Legacy team is a valid alias returned as group on entity reads. Other types remain extensible through profiles.", "$ref": "common.json#/$defs/type" },
     "name": { "type": "string" },
     "parent": { "$ref": "common.json#/$defs/id" },
     "url": { "type": "string" },

@@ -197,7 +197,7 @@ func TestRecallRehearsesOnlyItsLimitedResultsAndRespectsEventFilters(t *testing.
 	if len(results) != 1 || results[0].ID != "ev_old" {
 		t.Fatalf("type lineage: %+v", results)
 	}
-	results = e.episodicRecall(e.key, "", `{"context":{"text":"gateway"},"filters":{"occurred":{"from":"2026-01-01T00:00:00Z"},"kinds":["event"]}}`)
+	results = e.episodicRecall(e.key, "", `{"context":{"text":"gateway"},"filters":{"occurred":{"from":"2026-01-01T00:00:00Z"}}}`)
 	if len(results) != 1 || results[0].ID != "ev_retry" {
 		t.Fatalf("occurrence filter: %+v", results)
 	}
@@ -283,4 +283,30 @@ func TestHiddenEventsDoNotChangeRecallScoresOrCues(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.must(422, "POST", "/v1/records", writer, "", map[string]any{"appraisals": []any{map[string]any{"bucket": shop, "id": "ap_hidden_target", "target": "ev_hidden", "by": "ac_ev_retry", "valence": 1}}})
+}
+
+func TestRecallRejectsRemovedFilterAndOmitsDiscriminator(t *testing.T) {
+	e := newEngine(t)
+	e.repository("repo_shop", "ev_retry", "Gateway retry review.")
+	for _, value := range []string{"event", "memory"} {
+		e.must(422, "POST", "/v1/recall", e.key, "", map[string]any{
+			"context": map[string]string{"text": "gateway"},
+			"filters": map[string]any{"kinds": []string{value}},
+		})
+	}
+	raw := e.must(200, "POST", "/v1/recall", e.key, "", `{"context":{"text":"gateway"}}`)
+	var response struct {
+		Results []map[string]json.RawMessage `json:"results"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Results) != 1 {
+		t.Fatalf("results: %s", raw)
+	}
+	for _, result := range response.Results {
+		if _, found := result["kind"]; found {
+			t.Fatalf("unexpected discriminator: %s", raw)
+		}
+	}
 }

@@ -325,7 +325,7 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, store.ErrBucket):
 		_ = reply(w, http.StatusForbidden, failure{Error: err.Error()})
 	case errors.Is(err, store.ErrChanged), errors.Is(err, store.ErrMove),
-		errors.Is(err, postgres.ErrTaken), errors.Is(err, postgres.ErrKind):
+		errors.Is(err, postgres.ErrTaken), errors.Is(err, postgres.ErrRecordType):
 		_ = reply(w, http.StatusConflict, failure{Error: err.Error()})
 	case errors.Is(err, errTooLarge):
 		_ = reply(w, http.StatusRequestEntityTooLarge, failure{Error: err.Error()})

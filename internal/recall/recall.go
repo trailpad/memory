@@ -25,7 +25,6 @@ type Response struct {
 
 // Result is one record and why it came back.
 type Result struct {
-	Kind    string   `json:"kind"`
 	ID      string   `json:"id"`
 	Record  any      `json:"record"`
 	Score   float64  `json:"score"`
@@ -207,7 +206,7 @@ func (s *Service) Recall(ctx context.Context, access store.Access, req Request) 
 			Cue:       cue[id],
 			Recency:   recency(f.Happened, lastUsed(f, at), at, s.halfLife(f, resolvers[id])),
 		}
-		res := Result{Kind: f.Ref.Kind, ID: id, Score: combine(signals, w)}
+		res := Result{ID: id, Score: combine(signals, w)}
 		res.Record = f.Event
 		if req.Explain {
 			because := &Because{Relevance: signals[Relevance], Cue: CueMatch{Score: signals[Cue]}, Recency: signals[Recency]}
@@ -260,7 +259,7 @@ func (s *Service) Use(ctx context.Context, access store.Access, events []string)
 }
 
 func (s *Service) scope(req Request) store.Scope {
-	scope := store.Scope{Kinds: req.Filters.Kinds}
+	scope := store.Scope{}
 	if req.AsOf != nil {
 		t := req.AsOf.At
 		scope.AsOf = &t

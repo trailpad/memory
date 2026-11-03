@@ -146,7 +146,22 @@ Service requests authenticate with `Authorization: Bearer <service-key>`, using 
 | `PUT /v1/buckets` | Binds a source container to a bucket. |
 | `PUT /v1/buckets/{id}/readers` | Replaces source accounts allowed to read a bound bucket. |
 
-Batch writes return `stored`, a map from submitted to canonical IDs, and optional `unchanged` IDs. Rewriting an immutable record differently returns 409. Validation returns 422 with field problems. Hidden and missing records both return 404. Unknown request fields are rejected. Status codes follow [HTTP Semantics, RFC 9110 section 15](https://www.rfc-editor.org/rfc/rfc9110#section-15).
+Batch writes return `stored`, a map from submitted to canonical IDs, and optional `unchanged` IDs. Rewriting an immutable record differently returns 409. Validation returns 422 with field problems. Hidden and missing records both return 404. Unknown request fields are rejected.
+
+A recall response contains event results:
+
+```json
+{
+  "results": [
+    {
+      "id": "ev_meeting",
+      "record": {"id": "ev_meeting", "bucket": "work", "type": "meeting"},
+      "score": 0.8
+    }
+  ]
+}
+```
+ Status codes follow [HTTP Semantics, RFC 9110 section 15](https://www.rfc-editor.org/rfc/rfc9110#section-15).
 
 Event listings are ordered by occurrence time, then ID. `from` is inclusive and `to` exclusive. Optional filters are repeated `bucket`, `part_of`, and `top_level=true`. `top_level` cannot be combined with `part_of`. `limit` defaults to 200 and is at most 1000. `after` continues from an event ID. The response has `events`, `entities`, and optional `next` when the page is full. Undated events can be read by ID or recalled but are excluded from listings.
 
@@ -155,17 +170,32 @@ Event listings are ordered by occurrence time, then ID. `from` is inclusive and 
 ```json
 {
   "context": {"text":"retry gateway","subjects":["sb_retry"]},
-  "filters": {"kinds":["event"],"types":["github.pull_request"]},
+  "filters": {"types":["github.pull_request"]},
   "limit": 10,
   "explain": true
 }
 ```
 
-Context supports `text`, `place`, `participants`, `subjects`, `involves` and `at`. At least text or one entity cue is required. Filters support `kinds` (only `event`), `types` (including declared fallback types), `buckets`, and `occurred` with `from` and `to`. `as_of` limits recall to events and uses recorded by that time. Context `at` selects the time used for recency scoring and limits use timestamps.
+Context supports `text`, `place`, `participants`, `subjects`, `involves` and `at`. At least text or one entity cue is required. Filters support `types` (including declared fallback types), `buckets`, and `occurred` with `from` and `to`. `as_of` limits recall to events and uses recorded by that time. Context `at` selects the time used for recency scoring and limits use timestamps.
 
 Text candidates match event content and `why`. Cue candidates share entities, including nested parents, weighted by role and rarity. Recency decays from occurrence time, or capture time if undated, using the event type's half life. The latest rehearsal can raise recency above that baseline.
 
-Scores combine relevance, cue and recency with default weights 0.45, 0.35 and 0.2. `use` can select `review`, `planning` or `incident` presets; `weights` can override those three signals. Limit defaults to 10 and is at most 100. `explain` returns individual signals, shared cues and their path. Results carry `kind: "event"`, `id`, `record` and `score`.
+Scores combine relevance, cue and recency with default weights 0.45, 0.35 and 0.2. `use` can select `review`, `planning` or `incident` presets; `weights` can override those three signals. Limit defaults to 10 and is at most 100. `explain` returns individual signals, shared cues and their path. Results carry `id`, `record` and `score`. Unknown request fields are rejected.
+
+A recall response contains event results:
+
+```json
+{
+  "results": [
+    {
+      "id": "ev_meeting",
+      "record": {"id": "ev_meeting", "bucket": "work", "type": "meeting"},
+      "score": 0.8
+    }
+  ]
+}
+```
+
 
 Current recalls rehearse only returned events, after scoring them. Explicit use also rehearses events. Counts belong to the calling principal within its workspace. Historical requests (`as_of` or context `at`) do not add rehearsals. Hidden IDs and duplicate IDs cannot add extra uses. Listing and reading by ID do not rehearse.
 

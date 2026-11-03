@@ -8,20 +8,14 @@ import (
 )
 
 type Ref struct {
-	Kind string `json:"kind"`
-	ID   string `json:"id"`
+	ID string `json:"id"`
 }
-
-const (
-	EventKind = "event"
-)
 
 // Scope is which records a recall may see. Every candidate query applies it,
 // so a record outside it is never found, counted or returned.
 type Scope struct {
 	// AsOf answers as the store stood then, on the recorded clock. Nil is now.
-	AsOf  *time.Time
-	Kinds []string
+	AsOf *time.Time
 	// Types keeps records whose type is one of these or falls back to one,
 	// as read with the profiles each record names. Empty allows every type.
 	Types                    []record.Type

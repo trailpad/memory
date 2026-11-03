@@ -75,5 +75,5 @@ type Store interface {
 	// Entities reads several entities at once, by id. Ids the access may not
 	// read are left out, exactly as ids nothing has.
 	Entities(ctx context.Context, access Access, ids []string) (map[string]record.Entity, error)
-	Kinds(ctx context.Context, access Access, ids []string) (map[string]record.Kind, error)
+	RecordTypes(ctx context.Context, access Access, ids []string) (map[string]record.RecordType, error)
 }

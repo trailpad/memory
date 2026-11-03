@@ -60,21 +60,20 @@ func load() {
 	}
 }
 
-func Schema(kind string) (*jsonschema.Schema, error) {
+func Schema(recordType string) (*jsonschema.Schema, error) {
 	once.Do(load)
 	if failed != nil {
 		return nil, failed
 	}
-	s, ok := compiled[kind]
+	s, ok := compiled[recordType]
 	if !ok {
-		return nil, fmt.Errorf("no schema for %q", kind)
+		return nil, fmt.Errorf("no schema for %q", recordType)
 	}
 	return s, nil
 }
 
-// Validate checks raw JSON against the schema for one kind.
-func Validate(kind string, raw []byte) error {
-	s, err := Schema(kind)
+func Validate(recordType string, raw []byte) error {
+	s, err := Schema(recordType)
 	if err != nil {
 		return err
 	}

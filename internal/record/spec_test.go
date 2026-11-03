@@ -18,12 +18,12 @@ import (
 func schemas(t *testing.T) map[string]*jsonschema.Schema {
 	t.Helper()
 	out := map[string]*jsonschema.Schema{}
-	for _, kind := range []string{"event", "entity", "appraisal", "link", "profile"} {
-		s, err := spec.Schema(kind)
+	for _, recordType := range []string{"event", "entity", "appraisal", "link", "profile"} {
+		s, err := spec.Schema(recordType)
 		if err != nil {
 			t.Fatal(err)
 		}
-		out[kind] = s
+		out[recordType] = s
 	}
 	return out
 }
@@ -32,9 +32,9 @@ type validator interface{ Validate() record.Problems }
 
 // decode reads a record strictly, so a field the spec shows but the Go type
 // lacks fails instead of disappearing.
-func decode(kind string, raw []byte) (validator, error) {
+func decode(recordType string, raw []byte) (validator, error) {
 	var into validator
-	switch kind {
+	switch recordType {
 	case "event":
 		into = &record.Event{}
 	case "entity":
@@ -64,10 +64,10 @@ func decode(kind string, raw []byte) (validator, error) {
 	return nil, nil
 }
 
-func kindOf(file string) string {
+func recordTypeOf(file string) string {
 	name := filepath.Base(file)
-	kind, _, _ := strings.Cut(strings.TrimSuffix(name, ".json"), ".")
-	return kind
+	recordType, _, _ := strings.Cut(strings.TrimSuffix(name, ".json"), ".")
+	return recordType
 }
 
 func instance(t *testing.T, raw []byte) any {
@@ -91,21 +91,21 @@ func TestSpecExamplesPassSchemaAndGo(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			kind := kindOf(f)
-			schema, ok := compiled[kind]
+			recordType := recordTypeOf(f)
+			schema, ok := compiled[recordType]
 			if !ok {
-				t.Fatalf("no schema for %s", kind)
+				t.Fatalf("no schema for %s", recordType)
 			}
 			if err := schema.Validate(instance(t, raw)); err != nil {
 				t.Fatalf("schema refuses the spec's own example: %v", err)
 			}
-			if kind == "profile" {
+			if recordType == "profile" {
 				if _, err := profile.Parse(raw); err != nil {
 					t.Fatalf("Go refuses the spec's own example: %v", err)
 				}
 				return
 			}
-			rec, err := decode(kind, raw)
+			rec, err := decode(recordType, raw)
 			if err != nil {
 				t.Fatalf("Go refuses the spec's own example: %v", err)
 			}
@@ -193,9 +193,9 @@ func TestSchemaAndGoRefuseTheSameRecords(t *testing.T) {
 			}
 			c.change(m)
 			broken, _ := json.Marshal(m)
-			kind := kindOf(c.file)
+			recordType := recordTypeOf(c.file)
 
-			if kind == "profile" {
+			if recordType == "profile" {
 				// A profile from another namespace is valid JSON; owning names
 				// is a rule only Go can check.
 				if _, err := profile.Parse(broken); err == nil {
@@ -203,10 +203,10 @@ func TestSchemaAndGoRefuseTheSameRecords(t *testing.T) {
 				}
 				return
 			}
-			if err := compiled[kind].Validate(instance(t, broken)); err == nil {
+			if err := compiled[recordType].Validate(instance(t, broken)); err == nil {
 				t.Error("schema accepts it")
 			}
-			rec, err := decode(kind, broken)
+			rec, err := decode(recordType, broken)
 			if err == nil && len(rec.Validate()) == 0 {
 				t.Error("Go accepts it")
 			}
@@ -236,7 +236,7 @@ func TestRulesOnlyGoChecks(t *testing.T) {
 			_ = json.Unmarshal(raw, &m)
 			c.change(m)
 			broken, _ := json.Marshal(m)
-			rec, err := decode(kindOf(c.file), broken)
+			rec, err := decode(recordTypeOf(c.file), broken)
 			if err != nil {
 				t.Fatal(err)
 			}

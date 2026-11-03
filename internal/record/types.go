@@ -13,7 +13,7 @@ type Source struct {
 	By           string   `json:"by,omitempty"`
 }
 
-// Class is which of the spec's named kinds an entity is. An entity of a kind
+// Class is which of the spec's named classes an entity is. An entity of a type
 // declared by a profile has none.
 type Class string
 
@@ -43,7 +43,7 @@ type Identity struct {
 }
 
 // Entity is anything that exists apart from a single event: a place, an
-// actor, a subject, or a kind a profile declares. The place and actor fields
+// actor, a subject, or a type a profile declares. The place and actor fields
 // are optional on any entity.
 type Entity struct {
 	Bucket     string     `json:"bucket"`

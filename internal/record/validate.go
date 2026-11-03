@@ -140,10 +140,10 @@ func (e Entity) Validate() Problems {
 	switch e.Class {
 	case "", PlaceClass, ActorClass, SubjectClass:
 	default:
-		c.add("class", "%q is not place, actor or subject; leave it out for a kind a profile declares", e.Class)
+		c.add("class", "%q is not place, actor or subject; leave it out for a type a profile declares", e.Class)
 	}
 	if e.Class == "" && !e.Type.Namespaced() {
-		c.add("type", "a kind declared by a profile has a namespaced type, like crm.deal")
+		c.add("type", "a type declared by a profile has a namespaced type, like crm.deal")
 	}
 	if e.Parent != "" && e.Parent == e.ID {
 		c.add("parent", "an entity cannot be its own parent")

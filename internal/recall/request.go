@@ -30,7 +30,6 @@ type Span struct {
 
 // Filters are hard limits: a record outside them is never returned.
 type Filters struct {
-	Kinds    []string      `json:"kinds,omitempty"`
 	Types    []record.Type `json:"types,omitempty"`
 	Occurred *Span         `json:"occurred,omitempty"`
 	// Buckets narrows the recall to these buckets, never past what the
@@ -92,11 +91,6 @@ func (r Request) Validate() record.Problems {
 	}
 	if r.Limit < 0 || r.Limit > MaxLimit {
 		add("limit", "is between 1 and %d", MaxLimit)
-	}
-	for i, k := range r.Filters.Kinds {
-		if k != "event" {
-			add(fmt.Sprintf("filters.kinds[%d]", i), "%q is not event", k)
-		}
 	}
 	for i, t := range r.Filters.Types {
 		if !t.Valid() {

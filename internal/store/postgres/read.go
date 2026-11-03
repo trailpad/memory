@@ -52,17 +52,17 @@ func (s *Store) Event(ctx context.Context, access store.Access, id string) (reco
 	return e, s.strip(ctx, access, nil, []*record.Event{&e})
 }
 
-func (s *Store) Kinds(ctx context.Context, access store.Access, ids []string) (map[string]record.Kind, error) {
+func (s *Store) RecordTypes(ctx context.Context, access store.Access, ids []string) (map[string]record.RecordType, error) {
 	access, err := s.live(ctx, access)
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]record.Kind{}
+	out := map[string]record.RecordType{}
 	if len(ids) == 0 {
 		return out, nil
 	}
 	rows, err := s.pool.Query(ctx, `
-		select r.id, r.kind, coalesce(r.class, '') from record_ids r
+		select r.id, r.record_type, coalesce(r.class, '') from record_ids r
 		where r.workspace_id = $1 and r.id = any($3) and exists (
 			select 1 from entities x where x.workspace_id = $1 and x.id = r.id and x.requires <@ $2
 			union all select 1 from events x where x.workspace_id = $1 and x.id = r.id and x.requires <@ $2
@@ -74,11 +74,11 @@ func (s *Store) Kinds(ctx context.Context, access store.Access, ids []string) (m
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id, kind, class string
-		if err := rows.Scan(&id, &kind, &class); err != nil {
+		var id, recordType, class string
+		if err := rows.Scan(&id, &recordType, &class); err != nil {
 			return nil, err
 		}
-		out[id] = record.Kind{Record: kind, Class: record.Class(class)}
+		out[id] = record.RecordType{Record: recordType, Class: record.Class(class)}
 	}
 	return out, rows.Err()
 }

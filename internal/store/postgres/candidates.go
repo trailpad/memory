@@ -21,18 +21,6 @@ func (q *query) arg(v any) string {
 	return fmt.Sprintf("$%d", len(q.args))
 }
 
-func allows(kinds []string, kind string) bool {
-	if len(kinds) == 0 {
-		return true
-	}
-	for _, k := range kinds {
-		if k == kind {
-			return true
-		}
-	}
-	return false
-}
-
 // readable is the condition that a row of alias is in the access's
 // workspace and that it may read every bucket the row requires.
 func (q *query) readable(alias string, a store.Access) string {
@@ -40,36 +28,29 @@ func (q *query) readable(alias string, a store.Access) string {
 }
 
 // visible is a CTE of every record in scope that the access may read:
-// (kind, id, version).
+// (id, version).
 func (q *query) visible(a store.Access, s store.Scope) string {
-	var parts []string
 	inBuckets := func(alias string) []string {
 		if len(s.Buckets) == 0 {
 			return nil
 		}
 		return []string{alias + `.bucket_id = any(` + q.arg(s.Buckets) + `::text[])`}
 	}
-	if allows(s.Kinds, store.EventKind) {
-		where := append([]string{q.readable("e", a)}, inBuckets("e")...)
-		if s.AsOf != nil {
-			where = append(where, `e.recorded_at <= `+q.arg(*s.AsOf))
-		}
-		if len(s.Types) > 0 {
-			where = append(where, `e.type_lineage && `+q.arg(types(s.Types))+`::text[]`)
-		}
-		happened := `coalesce(e.occurred_at, e.recorded_at)`
-		if s.OccurredFrom != nil {
-			where = append(where, happened+` >= `+q.arg(*s.OccurredFrom))
-		}
-		if s.OccurredTo != nil {
-			where = append(where, happened+` < `+q.arg(*s.OccurredTo))
-		}
-		parts = append(parts, `select 'event'::text as kind, e.id, 0 as version from events e where `+strings.Join(where, ` and `))
+	where := append([]string{q.readable("e", a)}, inBuckets("e")...)
+	if s.AsOf != nil {
+		where = append(where, `e.recorded_at <= `+q.arg(*s.AsOf))
 	}
-	if len(parts) == 0 {
-		return `visible as (select null::text as kind, null::text as id, 0 as version where false)`
+	if len(s.Types) > 0 {
+		where = append(where, `e.type_lineage && `+q.arg(types(s.Types))+`::text[]`)
 	}
-	return `visible as (` + strings.Join(parts, ` union all `) + `)`
+	happened := `coalesce(e.occurred_at, e.recorded_at)`
+	if s.OccurredFrom != nil {
+		where = append(where, happened+` >= `+q.arg(*s.OccurredFrom))
+	}
+	if s.OccurredTo != nil {
+		where = append(where, happened+` < `+q.arg(*s.OccurredTo))
+	}
+	return `visible as (select e.id, 0 as version from events e where ` + strings.Join(where, ` and `) + `)`
 }
 
 // under is a CTE of every entity below each cue that the access may read:
@@ -95,11 +76,11 @@ func (s *Store) Text(ctx context.Context, access store.Access, scope store.Scope
 	visible := q.visible(access, scope)
 	// Any word may match; records matching more of them rank higher.
 	sql := `with ` + visible + `, q as (select nullif(replace(plainto_tsquery('english', ` + q.arg(text) + `)::text, '&', '|'), '')::tsquery as q)
-		select v.kind, v.id, ts_rank_cd(e.said, q.q) from visible v
-		left join events e on v.kind = 'event' and e.workspace_id = ` + q.arg(access.Workspace) + ` and e.id = v.id
+		select v.id, ts_rank_cd(e.said, q.q) from visible v
+		left join events e on e.workspace_id = ` + q.arg(access.Workspace) + ` and e.id = v.id
 		cross join q
 		where q.q is not null and e.said @@ q.q
-		order by ts_rank_cd(e.said, q.q) desc, v.kind, v.id
+		order by ts_rank_cd(e.said, q.q) desc, v.id
 		limit ` + q.arg(limit)
 	rows, err := s.pool.Query(ctx, sql, q.args...)
 	if err != nil {
@@ -109,7 +90,7 @@ func (s *Store) Text(ctx context.Context, access store.Access, scope store.Scope
 	var out []store.Scored
 	for rows.Next() {
 		var r store.Scored
-		if err := rows.Scan(&r.Ref.Kind, &r.Ref.ID, &r.Score); err != nil {
+		if err := rows.Scan(&r.Ref.ID, &r.Score); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -171,9 +152,9 @@ func (s *Store) Frequency(ctx context.Context, access store.Access, scope store.
 	}
 	q = &query{}
 	sql := `with recursive ` + q.visible(access, scope) + `, ` + q.under(access, cues) + `
-		select u.cue, count(distinct (v.kind, v.id)) from under u
+		select u.cue, count(distinct v.id) from under u
 		join involvements i on i.workspace_id = ` + q.arg(access.Workspace) + ` and i.entity_id = u.entity
-		join visible v on v.kind = i.record_kind and v.id = i.record_id and v.version = i.version
+		join visible v on i.record_type = 'event' and v.id = i.record_id and v.version = i.version
 		group by u.cue`
 	rows, err := s.pool.Query(ctx, sql, q.args...)
 	if err != nil {
@@ -202,24 +183,23 @@ func (s *Store) Touches(ctx context.Context, access store.Access, scope store.Sc
 	q := &query{}
 	sql := `with recursive ` + q.visible(access, scope) + `, ` + q.under(access, cues) + `,
 		touches as (
-			select v.kind, v.id, i.entity_id, i.role, u.cue, u.depth from under u
+			select v.id, i.entity_id, i.role, u.cue, u.depth from under u
 			join involvements i on i.workspace_id = ` + q.arg(access.Workspace) + ` and i.entity_id = u.entity
-			join visible v on v.kind = i.record_kind and v.id = i.record_id and v.version = i.version
+			join visible v on i.record_type = 'event' and v.id = i.record_id and v.version = i.version
 		)`
 	if only != nil {
-		kinds := make([]string, len(only))
 		ids := make([]string, len(only))
 		for i, r := range only {
-			kinds[i], ids[i] = r.Kind, r.ID
+			ids[i] = r.ID
 		}
 		sql += ` select distinct t.* from touches t
-			join unnest(` + q.arg(kinds) + `::text[], ` + q.arg(ids) + `::text[]) as o(kind, id) on o.kind = t.kind and o.id = t.id`
+			join unnest(` + q.arg(ids) + `::text[]) as o(id) on o.id = t.id`
 	} else {
 		sql += `, chosen as (
-			select kind, id from touches group by kind, id
-			order by count(distinct cue) desc, kind, id limit ` + q.arg(limit) + `
+			select id from touches group by id
+			order by count(distinct cue) desc, id limit ` + q.arg(limit) + `
 		)
-		select distinct t.* from touches t join chosen c on c.kind = t.kind and c.id = t.id`
+		select distinct t.* from touches t join chosen c on c.id = t.id`
 	}
 	rows, err := s.pool.Query(ctx, sql, q.args...)
 	if err != nil {
@@ -230,7 +210,7 @@ func (s *Store) Touches(ctx context.Context, access store.Access, scope store.Sc
 	for rows.Next() {
 		var t store.Touch
 		var role string
-		if err := rows.Scan(&t.Ref.Kind, &t.Ref.ID, &t.Entity, &role, &t.Cue, &t.Depth); err != nil {
+		if err := rows.Scan(&t.Ref.ID, &t.Entity, &role, &t.Cue, &t.Depth); err != nil {
 			return nil, err
 		}
 		t.Role = record.Role(role)
@@ -247,10 +227,9 @@ func (s *Store) Records(ctx context.Context, access store.Access, scope store.Sc
 	if len(refs) == 0 {
 		return nil, nil
 	}
-	kinds := make([]string, len(refs))
 	ids := make([]string, len(refs))
 	for i, r := range refs {
-		kinds[i], ids[i] = r.Kind, r.ID
+		ids[i] = r.ID
 	}
 	q := &query{}
 	visible := q.visible(access, scope)
@@ -263,12 +242,12 @@ func (s *Store) Records(ctx context.Context, access store.Access, scope store.Sc
 		used += ` and h.at <= ` + q.arg(*scope.UsedBy)
 	}
 	sql := `with ` + visible + `
-		select distinct v.kind, v.id, e.body,
+		select distinct v.id, e.body,
 			coalesce(e.occurred_at, e.recorded_at),
 			r.count, r.last
 		from visible v
-		join unnest(` + q.arg(kinds) + `::text[], ` + q.arg(ids) + `::text[]) as want(kind, id) on want.kind = v.kind and want.id = v.id
-		left join events e on v.kind = 'event' and e.workspace_id = ` + ws + ` and e.id = v.id
+		join unnest(` + q.arg(ids) + `::text[]) as want(id) on want.id = v.id
+		left join events e on e.workspace_id = ` + ws + ` and e.id = v.id
 		left join lateral (
 			select count(*) as count, max(h.at) as last from rehearsals h
 			where h.workspace_id = ` + ws + ` and h.event_id = v.id` + used + `
@@ -284,7 +263,7 @@ func (s *Store) Records(ctx context.Context, access store.Access, scope store.Sc
 		var body []byte
 		var count int
 		var last *time.Time
-		if err := rows.Scan(&f.Ref.Kind, &f.Ref.ID, &body, &f.Happened, &count, &last); err != nil {
+		if err := rows.Scan(&f.Ref.ID, &body, &f.Happened, &count, &last); err != nil {
 			return nil, err
 		}
 		var e record.Event

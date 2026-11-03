@@ -2,7 +2,7 @@ package record
 
 import "fmt"
 
-// Target is the kind of record a reference must point at.
+// Target is the record type a reference must point at.
 type Target string
 
 const (
@@ -106,15 +106,12 @@ func (l *Link) Refs() []Ref {
 	return r
 }
 
-// Kind is what a stored or batched record is, as far as references care.
-type Kind struct {
+type RecordType struct {
 	Record string // entity, event, appraisal, link
 	Class  Class  // for entities
 }
 
-// Accepts reports whether a reference of this target may point at a record
-// of this kind.
-func (t Target) Accepts(k Kind) bool {
+func (t Target) Accepts(k RecordType) bool {
 	switch t {
 	case TargetRecord:
 		return true

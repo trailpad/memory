@@ -299,22 +299,18 @@ func (w *writer) rewrite(b *store.Batch) {
 	}
 }
 
-// ErrKind is returned when an id already belongs to a record of another
-// kind, or an entity of another class. References were checked against the
-// stored kind, so it never changes.
-var ErrKind = errors.New("id already belongs to another kind of record")
+var ErrRecordType = errors.New("id already belongs to another record type")
 
 // ErrTaken is returned when an id belongs to a record the writer may not
 // read. It says no more than that, so it reveals nothing about the record.
 var ErrTaken = errors.New("id is already used in this workspace")
 
-// claim records which kind of record owns an id.
-func (w *writer) claim(ctx context.Context, id, kind string, class record.Class) error {
+func (w *writer) claim(ctx context.Context, id, recordType string, class record.Class) error {
 	var owner, ownerClass string
 	err := w.tx.QueryRow(ctx, `
-		insert into record_ids (workspace_id, id, kind, class) values ($1, $2, $3, nullif($4, ''))
+		insert into record_ids (workspace_id, id, record_type, class) values ($1, $2, $3, nullif($4, ''))
 		on conflict (workspace_id, id) do update set id = excluded.id
-		returning kind, coalesce(class, '')`, w.ws, id, kind, string(class)).Scan(&owner, &ownerClass)
+		returning record_type, coalesce(class, '')`, w.ws, id, recordType, string(class)).Scan(&owner, &ownerClass)
 	if err != nil {
 		return err
 	}
@@ -323,11 +319,11 @@ func (w *writer) claim(ctx context.Context, id, kind string, class record.Class)
 	} else if !visible {
 		return fmt.Errorf("%w: %s", ErrTaken, id)
 	}
-	if owner != kind {
-		return fmt.Errorf("%w: %s is a %s", ErrKind, id, owner)
+	if owner != recordType {
+		return fmt.Errorf("%w: %s is a %s", ErrRecordType, id, owner)
 	}
 	if ownerClass != string(class) {
-		return fmt.Errorf("%w: %s is a %s entity, not %s", ErrKind, id, or(ownerClass, "classless"), or(string(class), "classless"))
+		return fmt.Errorf("%w: %s is a %s entity, not %s", ErrRecordType, id, or(ownerClass, "classless"), or(string(class), "classless"))
 	}
 	return nil
 }
@@ -448,12 +444,12 @@ func (w *writer) identities(ctx context.Context, e record.Entity) error {
 	return nil
 }
 
-func (w *writer) involve(ctx context.Context, kind, recordID string, version int, place string, participants []record.Participant, subjects []record.SubjectRef, involves []record.Involvement) error {
+func (w *writer) involve(ctx context.Context, recordType, recordID string, version int, place string, participants []record.Participant, subjects []record.SubjectRef, involves []record.Involvement) error {
 	row := func(entity, via string, role record.Role) error {
 		_, err := w.tx.Exec(ctx, `
-			insert into involvements (workspace_id, record_kind, record_id, version, entity_id, via, role)
+			insert into involvements (workspace_id, record_type, record_id, version, entity_id, via, role)
 			values ($1, $2, $3, $4, $5, $6, $7)
-			on conflict do nothing`, w.ws, kind, recordID, version, entity, via, string(role))
+			on conflict do nothing`, w.ws, recordType, recordID, version, entity, via, string(role))
 		return err
 	}
 	if place != "" {

@@ -381,7 +381,7 @@ func TestAnEntityKeepsItsClass(t *testing.T) {
 	ana := example[record.Entity](t, "entity.actor.json")
 	ana.Class = record.SubjectClass
 	ana.Type = "code.file"
-	if _, err := w.ingest(ctx, store.Batch{Entities: []record.Entity{ana}}); !errors.Is(err, postgres.ErrKind) {
+	if _, err := w.ingest(ctx, store.Batch{Entities: []record.Entity{ana}}); !errors.Is(err, postgres.ErrRecordType) {
 		t.Fatalf("an actor cannot become a subject, got %v", err)
 	}
 
@@ -397,7 +397,7 @@ func TestAnEntityKeepsItsClass(t *testing.T) {
 		Events: []record.Event{{ID: "ev_by_ana", Type: "slack.thread.message",
 			Participants: []record.Participant{{Actor: "ac_ana", Role: record.Author}}}},
 	})
-	if !errors.Is(err, postgres.ErrKind) {
+	if !errors.Is(err, postgres.ErrRecordType) {
 		t.Fatalf("a subject sharing Ana's source cannot overwrite her, got %v", err)
 	}
 	if got, _ := w.store.Entity(ctx, w.access, "ac_ana"); got.Class != record.ActorClass {

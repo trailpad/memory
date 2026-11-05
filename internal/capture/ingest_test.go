@@ -386,6 +386,7 @@ func TestAnEntityKeepsItsClass(t *testing.T) {
 	}
 
 	impostor := entity("sb_impostor", record.SubjectClass, "code.file")
+	impostor.Bucket = example[record.Entity](t, "entity.actor.json").Bucket
 	impostor.Source = &record.Source{System: "github", NativeID: "ana-source"}
 	ana = example[record.Entity](t, "entity.actor.json")
 	ana.Source = impostor.Source

@@ -84,7 +84,7 @@ The legacy actor type `team` remains valid as an alias for `group`. Stored recor
 
 ## Source
 
-A source may contain `system`, `installation`, `native_id`, `url`, `recorded_at`, `method` and `by` (an actor ID). The workspace, system, installation and native ID identify one captured record. Repeated capture resolves to the stored ID and rewrites references within the batch.
+A source may contain `system`, `installation`, `native_id`, `url`, `recorded_at`, `method` and `by` (an actor ID). The workspace, bucket, system, installation and native ID identify one captured record. Repeated capture into the same bucket resolves to the stored ID and rewrites references within the batch. The same source captured into two buckets creates two records. For example, one external delivery received by two scopes is stored separately in each scope's bucket.
 
 The store also keeps its own capture time. `occurred_at` answers when an event happened; the store's recorded time answers when it became available to recall.
 

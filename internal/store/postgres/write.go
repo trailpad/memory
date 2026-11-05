@@ -145,32 +145,32 @@ func (w *writer) id(given string) string {
 
 func idKey(ws, id string) string { return "id:" + ws + "\x1f" + id }
 
-func sourceKey(ws, table string, src *record.Source) string {
+func sourceKey(ws, bucket, table string, src *record.Source) string {
 	if src == nil || src.NativeID == "" {
 		return ""
 	}
-	return "src:" + table + ":" + ws + "\x1f" + src.System + "\x1f" + src.Installation + "\x1f" + src.NativeID
+	return "src:" + table + ":" + ws + "\x1f" + bucket + "\x1f" + src.System + "\x1f" + src.Installation + "\x1f" + src.NativeID
 }
 
 func lockKeys(ws string, b *store.Batch) []string {
 	var keys []string
-	add := func(id, table string, src *record.Source) {
+	add := func(id, bucket, table string, src *record.Source) {
 		keys = append(keys, idKey(ws, id))
-		if k := sourceKey(ws, table, src); k != "" {
+		if k := sourceKey(ws, bucket, table, src); k != "" {
 			keys = append(keys, k)
 		}
 	}
 	for _, e := range b.Entities {
-		add(e.ID, "entities", e.Source)
+		add(e.ID, e.Bucket, "entities", e.Source)
 	}
 	for _, e := range b.Events {
-		add(e.ID, "events", e.Source)
+		add(e.ID, e.Bucket, "events", e.Source)
 	}
 	for _, a := range b.Appraisals {
-		add(a.ID, "appraisals", a.Source)
+		add(a.ID, a.Bucket, "appraisals", a.Source)
 	}
 	for _, l := range b.Links {
-		add(l.ID, "links", l.Source)
+		add(l.ID, l.Bucket, "links", l.Source)
 	}
 	return keys
 }
@@ -197,9 +197,9 @@ func (w *writer) lock(ctx context.Context, keys []string) error {
 func (w *writer) resolve(ctx context.Context, b *store.Batch) error {
 	w.givenIDs = map[string]bool{}
 	first := map[string]string{}
-	find := func(table, id string, src *record.Source, current string) error {
+	find := func(table, id, bucket string, src *record.Source, current string) error {
 		w.givenIDs[id] = true
-		key := sourceKey(w.ws, table, src)
+		key := sourceKey(w.ws, bucket, table, src)
 		if key == "" {
 			return nil
 		}
@@ -218,8 +218,8 @@ func (w *writer) resolve(ctx context.Context, b *store.Batch) error {
 		err := w.tx.QueryRow(ctx, `select id from `+table+
 			` where workspace_id = $1 and source_system is not distinct from $2
 			and source_installation is not distinct from nullif($3, '') and source_native_id = $4
-			and requires <@ $5`+current,
-			w.ws, src.System, src.Installation, src.NativeID, w.access.Read).Scan(&stored)
+			and bucket_id = $5 and requires <@ $6`+current,
+			w.ws, src.System, src.Installation, src.NativeID, bucket, w.access.Read).Scan(&stored)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -232,22 +232,22 @@ func (w *writer) resolve(ctx context.Context, b *store.Batch) error {
 		return nil
 	}
 	for _, e := range b.Entities {
-		if err := find("entities", e.ID, e.Source, ""); err != nil {
+		if err := find("entities", e.ID, e.Bucket, e.Source, ""); err != nil {
 			return err
 		}
 	}
 	for _, e := range b.Events {
-		if err := find("events", e.ID, e.Source, ""); err != nil {
+		if err := find("events", e.ID, e.Bucket, e.Source, ""); err != nil {
 			return err
 		}
 	}
 	for _, a := range b.Appraisals {
-		if err := find("appraisals", a.ID, a.Source, ""); err != nil {
+		if err := find("appraisals", a.ID, a.Bucket, a.Source, ""); err != nil {
 			return err
 		}
 	}
 	for _, l := range b.Links {
-		if err := find("links", l.ID, l.Source, ""); err != nil {
+		if err := find("links", l.ID, l.Bucket, l.Source, ""); err != nil {
 			return err
 		}
 	}

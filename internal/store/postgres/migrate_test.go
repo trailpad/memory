@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/trailpad/memory/internal/record"
+	"github.com/trailpad/memory/internal/store"
 	"github.com/trailpad/memory/internal/store/postgres"
 	"github.com/trailpad/memory/internal/store/postgres/pgtest"
 )
@@ -19,6 +21,9 @@ func exists(t *testing.T, s *postgres.Store, table string) bool {
 
 func TestMigrationsGoDownAndBackUp(t *testing.T) {
 	s := pgtest.ForTest(t)
+	if err := s.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	if err := s.Rollback(ctx); err != nil {
 		t.Fatal(err)
@@ -51,6 +56,9 @@ func TestMigrationsGoDownAndBackUp(t *testing.T) {
 
 func TestEpisodicMigrationPreservesEvents(t *testing.T) {
 	s := pgtest.ForTest(t)
+	if err := s.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	ctx := t.Context()
 	if err := s.Rollback(ctx); err != nil {
 		t.Fatal(err)
@@ -101,6 +109,9 @@ func TestEpisodicMigrationPreservesEvents(t *testing.T) {
 
 func TestRecordTypeMigrationRoundTrip(t *testing.T) {
 	s := pgtest.ForTest(t)
+	if err := s.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	ctx := t.Context()
 	assertSchema := func(column, constraint string) {
 		t.Helper()
@@ -154,5 +165,42 @@ func TestRecordTypeMigrationRoundTrip(t *testing.T) {
 	}
 	if column != "event" {
 		t.Fatalf("record type: %s", column)
+	}
+}
+
+func TestBucketCaptureMigrationPreservesRecords(t *testing.T) {
+	s := pgtest.ForTest(t)
+	ctx := t.Context()
+	if err := s.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	access := pgtest.Workspace(t, s, "ws_capture", "pr_capture", "bk_capture")
+	batch := store.Batch{
+		Entities: []record.Entity{{ID: "pl_capture", Bucket: "bk_capture", Class: record.PlaceClass, Type: "github.repository",
+			Source: &record.Source{System: "github", NativeID: "repository"}}},
+		Events: []record.Event{{ID: "ev_capture", Bucket: "bk_capture", Type: "github.pull_request", Place: "pl_capture",
+			Source: &record.Source{System: "github", NativeID: "delivery"}}},
+	}
+	if _, err := s.Write(ctx, access, batch); err != nil {
+		t.Fatal(err)
+	}
+	for _, up := range []bool{true, false, true} {
+		var err error
+		if up {
+			err = s.Migrate(ctx)
+		} else {
+			err = s.Rollback(ctx)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		entity, err := s.Entity(ctx, access, "pl_capture")
+		if err != nil || entity.Bucket != "bk_capture" || entity.Source.NativeID != "repository" {
+			t.Fatalf("entity after migration: %+v, %v", entity, err)
+		}
+		event, err := s.Event(ctx, access, "ev_capture")
+		if err != nil || event.Bucket != "bk_capture" || event.Source.NativeID != "delivery" || event.Place != "pl_capture" {
+			t.Fatalf("event after migration: %+v, %v", event, err)
+		}
 	}
 }

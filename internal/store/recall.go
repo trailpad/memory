@@ -60,6 +60,7 @@ type Found struct {
 // candidates; ranking them is recall's job. Nothing the access may not read
 // is found, counted, walked through or returned.
 type Recaller interface {
+	Linker
 	// Text is records whose words match, best text match first.
 	Text(ctx context.Context, access Access, scope Scope, text string, limit int) ([]Scored, error)
 	// Ancestors is each entity and every parent above it, the entity itself

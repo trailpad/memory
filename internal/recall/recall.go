@@ -25,10 +25,11 @@ type Response struct {
 
 // Result is one record and why it came back.
 type Result struct {
-	ID      string   `json:"id"`
-	Record  any      `json:"record"`
-	Score   float64  `json:"score"`
-	Because *Because `json:"because,omitempty"`
+	Neighbours []Neighbour `json:"neighbours,omitempty"`
+	ID         string      `json:"id"`
+	Record     any         `json:"record"`
+	Score      float64     `json:"score"`
+	Because    *Because    `json:"because,omitempty"`
 }
 
 // Because is each signal on its own, the cues shared and the path from the
@@ -239,6 +240,11 @@ func (s *Service) Recall(ctx context.Context, access store.Access, req Request) 
 	})
 	if len(results) > limit {
 		results = results[:limit]
+	}
+	if req.Expand.Neighbours > 0 {
+		if err := s.neighbours(ctx, access, scope, results, req.Expand.Neighbours); err != nil {
+			return Response{}, err
+		}
 	}
 	if req.AsOf == nil && req.Context.At == nil {
 		ids := make([]string, len(results))

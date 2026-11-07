@@ -59,6 +59,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	mux.Handle("POST /v1/records", s.as(access.Write, s.write))
 	mux.Handle("GET /v1/entities/{id}", s.as(access.Read, s.entity))
+	mux.Handle("POST /v1/events/links", s.as(access.Read, s.eventLinks))
 	mux.Handle("GET /v1/events", s.as(access.Read, s.events))
 	mux.Handle("GET /v1/events/{id}", s.as(access.Read, s.event))
 	mux.Handle("POST /v1/recall", s.as(access.Read, s.recall))

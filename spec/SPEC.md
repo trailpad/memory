@@ -141,6 +141,7 @@ Service requests authenticate with `Authorization: Bearer <service-key>`, using 
 | `GET /v1/entities/{id}` | Reads one entity. |
 | `GET /v1/events/{id}` | Reads one event with readable appraisal values. |
 | `GET /v1/events` | Lists dated events with readable appraisal values and involved entities. |
+| `POST /v1/events/links` | Lists dated events and ranked connections within a time window. |
 | `POST /v1/recall` | Returns ranked events. |
 | `POST /v1/events/use` | Records use of event IDs from `{"events":["ev_retry_review"]}`. Returns 204. |
 | `PUT /v1/buckets` | Binds a source container to a bucket. |
@@ -199,7 +200,78 @@ A recall response contains event results:
 
 Current recalls rehearse only returned events, after scoring them. Explicit use also rehearses events. Counts belong to the calling principal within its workspace. Historical requests (`as_of` or context `at`) do not add rehearsals. Hidden IDs and duplicate IDs cannot add extra uses. Listing and reading by ID do not rehearse.
 
-Valence, place and attribute filters, and nonzero neighbour expansion, are not implemented and return validation errors. Vector retrieval and graph spreading are not implemented.
+Valence, place and attribute filters are not implemented and return validation errors. Vector retrieval and graph spreading are not implemented.
+
+## Event linking
+
+Linking ranks candidate event pairs and returns a separate explanation for each matching approach. Scores and approach scores are between 0 and 1. Only readable events, entities, explicit links and intermediate thread events contribute evidence. Bucket filters narrow the events being linked. Historical recall also limits evidence to records captured by `as_of`.
+
+| Approach | Query and score | Evidence in `because` |
+|---|---|---|
+| `thread` | Walk `part_of` and `in_reply_to` in either direction, including siblings, through at most 16 edges. Score 1. Readable intermediate events may be outside the occurrence window. | `score`, `path` of event IDs from the first endpoint to the second |
+| `subject` | Join shared subject and involved entity IDs. Reuse recall rarity `log((total+1)/frequency)`, where frequency counts distinct visible events sharing that subject or involved entity. Sum rarity for distinct shared IDs, divide by `log(total+1)`, and cap at 1. | `score`, `shared` entity IDs |
+| `people` | Join shared participants. Decay by the absolute occurrence gap with a seven day half life. Requires dated events. | `score`, `shared` participant IDs |
+| `time` | Match the same readable place within 24 hours. Decay by the absolute occurrence gap with a three hour half life. Requires dated events. | `score`, `gap_seconds` |
+| `text` | Search the existing content and `why` tsvector using any of the anchor's searchable words. Use `ts_rank_cd` normalized by rank/(rank+1). | `score` |
+| `explicit` | Match stored links in either direction. Score 1 regardless of link type. | `score`, `types` of the matching stored links |
+
+Default weights are `thread: 1`, `subject: 1`, `people: 0.3`, `time: 0.1`, `text: 0.1`, `explicit: 1`. The combined score is the weighted sum divided by the total enabled weight, including weights for approaches that did not match. This keeps weak time or text overlap below a thread or rare subject match. `weights` overrides individual defaults; weights must be from 0 to 1000 and at least one enabled weight must be positive. `approaches` selects the approaches to run; omitted means all six. Unknown names produce a 422 field problem for `approaches[i]` or `weights.<name>`.
+
+Candidate selection runs in SQL. Per anchor, it considers up to 200 events per shared entity, 200 nearest events per participant, 200 nearest events in the same place, and 100 best text matches, together with thread and explicit matches. Results are ranked in Go and ties use endpoint IDs. Zero score pairs are omitted.
+
+`POST /v1/events/links` requires `from` and `to` as RFC 3339 times. The interval is inclusive at `from` and exclusive at `to`. Optional `buckets` has the same access restrictions as the event listing. The response includes `events` and `entities` in the same shape as `GET /v1/events`, covering the entire window, plus `links`. Undated events are excluded. Both endpoints must be in the returned events. Each undirected pair appears once with `from < to`, strongest first. `limit` caps links, defaults to 500 and is at most 10000. `min_score` is an inclusive threshold between 0 and 1. Neither listing links nor expanding neighbours rehearses the linked events.
+
+```json
+{
+  "buckets": ["bk_shop"],
+  "from": "2026-10-21T00:00:00Z",
+  "to": "2026-10-24T00:00:00Z",
+  "approaches": ["thread", "subject"],
+  "weights": {"subject": 2},
+  "min_score": 0.1,
+  "limit": 500
+}
+```
+
+Example response for a thread pair (event bodies abbreviated):
+
+```json
+{
+  "events": [
+    {"id":"ev_pr","bucket":"bk_shop","type":"github.pull_request","occurred_at":"2026-10-21T09:00:00Z"},
+    {"id":"ev_review","bucket":"bk_shop","type":"github.pull_request.review","occurred_at":"2026-10-21T10:00:00Z","part_of":"ev_pr"}
+  ],
+  "entities": [],
+  "links": [
+    {"from":"ev_pr","to":"ev_review","score":0.3333333333333333,
+     "because":{"thread":{"score":1,"path":["ev_pr","ev_review"]}}}
+  ]
+}
+```
+
+Recall accepts `expand.neighbours` from 0 to 100 (default 0). A positive value adds up to that many ranked linked events to each result, using all approaches and default linking weights. Neighbours obey the recall's bucket, type, occurrence and historical filters. Their evidence is returned even when recall `explain` is false. Thread paths start at the recalled event.
+
+```json
+{
+  "context": {"subjects":["sb_retry_policy"]},
+  "expand": {"neighbours":3}
+}
+```
+
+Example expanded result:
+
+```json
+{
+  "results": [
+    {"id":"ev_pr","record":{"id":"ev_pr","bucket":"bk_shop","type":"github.pull_request"},"score":0.8,
+     "neighbours":[
+       {"id":"ev_review","record":{"id":"ev_review","bucket":"bk_shop","type":"github.pull_request.review","part_of":"ev_pr"},
+        "score":0.2857142857142857,
+        "because":{"thread":{"score":1,"path":["ev_pr","ev_review"]}}}
+     ]}
+  ]
+}
+```
 
 ## Access
 

@@ -23,5 +23,11 @@
     "knowledge.after": {
       "text": "Retry three times."
     }
-  }
+  },
+  "involves": [
+    {
+      "entity": "sb_retry_file",
+      "role": "about"
+    }
+  ]
 }

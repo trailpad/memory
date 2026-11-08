@@ -33,6 +33,7 @@ var githubApp = access.Installation{System: "github", Installation: "gh_inst_1",
 // engine is a running engine with one workspace, a SourceAnt service that is
 // also the issuer for its people, and a GitHub installation it connects.
 type engine struct {
+	recall  *recall.Service
 	t       *testing.T
 	store   *postgres.Store
 	server  *httptest.Server
@@ -56,6 +57,7 @@ func newEngine(t *testing.T) *engine {
 		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Now:        clock,
 	}
+	e.recall = api.Recall
 	e.server = httptest.NewServer(api.Handler())
 	t.Cleanup(e.server.Close)
 

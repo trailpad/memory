@@ -510,7 +510,7 @@ func (w *writer) event(ctx context.Context, e record.Event, lineage []record.Typ
 		}
 		return nil
 	}
-	texts := []string{e.Why}
+	texts := []string{e.Title, e.Why}
 	for _, u := range e.Content {
 		texts = append(texts, u.Text)
 	}

@@ -41,6 +41,7 @@
     "attributes": {"$ref": "common.json#/$defs/attributes"},
     "profiles": {"$ref": "common.json#/$defs/profiles"},
     "source": {"$ref": "common.json#/$defs/source"},
+    "title": {"type": "string", "maxLength": 8192},
     "why": {"type": "string", "maxLength": 8192},
     "recall": {
       "type": "object",

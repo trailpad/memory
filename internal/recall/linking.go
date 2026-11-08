@@ -11,21 +11,35 @@ import (
 	"github.com/trailpad/memory/internal/store"
 )
 
-var linkDefaults = map[string]float64{"thread": 1, "subject": 1, "people": 0.3, "time": 0.1, "text": 0.1, "explicit": 1}
+var linkDefaults = map[string]float64{"thread": 1, "subject": 0.9, "meaning": 0.6, "people": 0.4, "time": 0.2, "text": 0.3, "explicit": 1}
 
 type LinkOptions struct {
-	Approaches []string           `json:"approaches,omitempty"`
-	Weights    map[string]float64 `json:"weights,omitempty"`
-	MinScore   float64            `json:"min_score,omitempty"`
-	Limit      int                `json:"limit,omitempty"`
+	perAnchorLimit     int
+	AnchorsLimit       int                `json:"anchors_limit,omitempty"`
+	After              string             `json:"after,omitempty"`
+	CommonSubjectShare *float64           `json:"common_subject_share,omitempty"`
+	MeaningFloor       *float64           `json:"meaning_floor,omitempty"`
+	Approaches         []string           `json:"approaches,omitempty"`
+	Weights            map[string]float64 `json:"weights,omitempty"`
+	MinScore           float64            `json:"min_score,omitempty"`
+	Limit              int                `json:"limit,omitempty"`
 }
 
 type LinkEvidence struct {
-	Score      float64  `json:"score"`
-	Shared     []string `json:"shared,omitempty"`
-	Path       []string `json:"path,omitempty"`
-	GapSeconds *float64 `json:"gap_seconds,omitempty"`
-	Types      []string `json:"types,omitempty"`
+	Score      float64      `json:"score"`
+	Shared     []string     `json:"shared,omitempty"`
+	Path       []string     `json:"path,omitempty"`
+	GapSeconds *float64     `json:"gap_seconds,omitempty"`
+	Links      []StoredLink `json:"links,omitempty"`
+	Cosine     *float64     `json:"cosine,omitempty"`
+	Model      string       `json:"model,omitempty"`
+}
+
+type StoredLink struct {
+	ID   string `json:"id"`
+	From string `json:"from"`
+	To   string `json:"to"`
+	Type string `json:"type"`
 }
 
 type EventLink struct {
@@ -54,10 +68,20 @@ func (o LinkOptions) Validate() record.Problems {
 		w := o.Weights[a]
 		if _, ok := linkDefaults[a]; !ok {
 			add("weights."+a, "is not an approach this version scores")
-		} else if math.IsNaN(w) || math.IsInf(w, 0) || w < 0 || w > MaxWeight {
-			add("weights."+a, "must be between 0 and 1000")
+		} else if math.IsNaN(w) || math.IsInf(w, 0) || w < 0 || w > 1 {
+			add("weights."+a, "must be between 0 and 1")
 		}
 	}
+	if o.AnchorsLimit < 0 || o.AnchorsLimit > 1000 {
+		add("anchors_limit", "must be between 1 and 1000")
+	}
+	if value := o.CommonSubjectShare; value != nil && (math.IsNaN(*value) || *value < 0 || *value > 1) {
+		add("common_subject_share", "must be between 0 and 1")
+	}
+	if value := o.MeaningFloor; value != nil && (math.IsNaN(*value) || *value < 0 || *value >= 1) {
+		add("meaning_floor", "must be at least 0 and below 1")
+	}
+
 	if o.MinScore < 0 || o.MinScore > 1 {
 		add("min_score", "must be between 0 and 1")
 	}
@@ -87,7 +111,7 @@ func sortedKeys[V any](m map[string]V) []string {
 func (o LinkOptions) settings() ([]string, map[string]float64) {
 	names := o.Approaches
 	if names == nil {
-		names = sortedKeys(linkDefaults)
+		names = []string{"explicit", "thread", "subject", "people", "time", "meaning"}
 	}
 	w := map[string]float64{}
 	for _, a := range names {
@@ -104,9 +128,24 @@ func (s *Service) Links(ctx context.Context, access store.Access, scope store.Sc
 		return nil, p
 	}
 	names, w := o.settings()
+	scope.CommonSubjectShare = 0.2
+	if o.CommonSubjectShare != nil {
+		scope.CommonSubjectShare = *o.CommonSubjectShare
+	}
 	rows, err := s.Store.LinkCandidates(ctx, access, scope, anchors, names)
 	if err != nil {
 		return nil, err
+	}
+	if slices.Contains(names, "meaning") {
+		floor := s.floor()
+		if o.MeaningFloor != nil {
+			floor = *o.MeaningFloor
+		}
+		semantic, err := s.meaningLinks(ctx, access, scope, anchors, floor)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, semantic...)
 	}
 	anchorSet := map[string]bool{}
 	for _, id := range anchors {
@@ -114,8 +153,11 @@ func (s *Service) Links(ctx context.Context, access store.Access, scope store.Sc
 	}
 	pairs := map[[2]string]*EventLink{}
 	for _, r := range rows {
+		if r.Truncated {
+			store.ReportLinkTruncation(ctx, r.Approach)
+		}
 		from, to := r.From, r.To
-		if undirected && (!anchorSet[from] || !anchorSet[to]) {
+		if undirected && !anchorSet[from] && !anchorSet[to] {
 			continue
 		}
 		if undirected && from > to {
@@ -130,6 +172,10 @@ func (s *Service) Links(ctx context.Context, access store.Access, scope store.Sc
 		}
 		e := p.Because[r.Approach]
 		switch r.Approach {
+		case "meaning":
+			e.Score = r.Value
+			e.Cosine = &r.Cosine
+			e.Model = r.Model
 		case "subject":
 			for _, id := range r.Shared {
 				if !slices.Contains(e.Shared, id) {
@@ -154,22 +200,22 @@ func (s *Service) Links(ctx context.Context, access store.Access, scope store.Sc
 			}
 		case "explicit":
 			e.Score = 1
-			e.Types = append(e.Types, r.Type)
+			stored := StoredLink{r.LinkID, r.LinkFrom, r.LinkTo, r.Type}
+			if !slices.Contains(e.Links, stored) {
+				e.Links = append(e.Links, stored)
+			}
 		}
 		slices.Sort(e.Shared)
 		e.Shared = slices.Compact(e.Shared)
-		slices.Sort(e.Types)
-		e.Types = slices.Compact(e.Types)
 		p.Because[r.Approach] = e
 	}
 	out := []EventLink{}
 	for _, p := range pairs {
-		total := 0.0
+		remaining := 1.0
 		for _, a := range sortedKeys(w) {
-			total += w[a]
-			p.Score += w[a] * p.Because[a].Score
+			remaining *= 1 - w[a]*p.Because[a].Score
 		}
-		p.Score /= total
+		p.Score = 1 - remaining
 		if p.Score > 0 && p.Score >= o.MinScore {
 			out = append(out, *p)
 		}
@@ -183,6 +229,17 @@ func (s *Service) Links(ctx context.Context, access store.Access, scope store.Sc
 		}
 		return out[i].To < out[j].To
 	})
+	if o.perAnchorLimit > 0 {
+		selected := make([]EventLink, 0, min(len(out), len(anchors)*o.perAnchorLimit))
+		counts := map[string]int{}
+		for _, link := range out {
+			if counts[link.From] < o.perAnchorLimit {
+				counts[link.From]++
+				selected = append(selected, link)
+			}
+		}
+		return selected, nil
+	}
 	limit := o.Limit
 	if limit == 0 {
 		limit = 500
@@ -194,25 +251,38 @@ func (s *Service) Links(ctx context.Context, access store.Access, scope store.Sc
 }
 
 func (s *Service) neighbours(ctx context.Context, access store.Access, scope store.Scope, results []Result, n int) error {
+	anchors := make([]string, len(results))
 	for i := range results {
-		links, err := s.Links(ctx, access, scope, []string{results[i].ID}, LinkOptions{Limit: n}, false)
-		if err != nil {
-			return err
+		anchors[i] = results[i].ID
+	}
+	links, err := s.Links(ctx, access, scope, anchors, LinkOptions{perAnchorLimit: n}, false)
+	if err != nil {
+		return err
+	}
+	byAnchor := map[string][]EventLink{}
+	refs := []store.Ref{}
+	seen := map[string]bool{}
+	for _, l := range links {
+		if len(byAnchor[l.From]) >= n {
+			continue
 		}
-		refs := make([]store.Ref, len(links))
-		for j, l := range links {
-			refs[j] = store.Ref{ID: l.To}
+		byAnchor[l.From] = append(byAnchor[l.From], l)
+		if !seen[l.To] {
+			seen[l.To] = true
+			refs = append(refs, store.Ref{ID: l.To})
 		}
-		found, err := s.Store.Records(ctx, access, scope, refs)
-		if err != nil {
-			return err
-		}
-		records := map[string]*record.Event{}
-		for _, f := range found {
-			records[f.Ref.ID] = f.Event
-		}
+	}
+	found, err := s.Store.Records(ctx, access, scope, refs)
+	if err != nil {
+		return err
+	}
+	records := map[string]*record.Event{}
+	for _, f := range found {
+		records[f.Ref.ID] = f.Event
+	}
+	for i := range results {
 		results[i].Neighbours = []Neighbour{}
-		for _, l := range links {
+		for _, l := range byAnchor[results[i].ID] {
 			if e := records[l.To]; e != nil {
 				results[i].Neighbours = append(results[i].Neighbours, Neighbour{ID: l.To, Record: e, Score: l.Score, Because: l.Because})
 			}

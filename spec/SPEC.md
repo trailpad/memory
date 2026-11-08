@@ -179,7 +179,7 @@ Event listings are ordered by occurrence time, then ID. `from` is inclusive and 
 
 Context supports `text`, `place`, `participants`, `subjects`, `involves` and `at`. At least text or one entity cue is required. Filters support `types` (including declared fallback types), `buckets`, and `occurred` with `from` and `to`. `as_of` limits recall to events and uses recorded by that time. Context `at` selects the time used for recency scoring and limits use timestamps.
 
-Text candidates match event content and `why`. Cue candidates share entities, including nested parents, weighted by role and rarity. Recency decays from occurrence time, or capture time if undated, using the event type's half life. The latest rehearsal can raise recency above that baseline.
+Events accept an optional `title` of at most 8192 characters. Text candidates match event title, content and `why`. Cue candidates share entities, including nested parents, weighted by role and rarity. Recency decays from occurrence time, or capture time if undated, using the event type's half life. The latest rehearsal can raise recency above that baseline.
 
 Scores combine relevance, cue and recency with default weights 0.45, 0.35 and 0.2. `use` can select `review`, `planning` or `incident` presets; `weights` can override those three signals. Limit defaults to 10 and is at most 100. `explain` returns individual signals, shared cues and their path. Results carry `id`, `record` and `score`. Unknown request fields are rejected.
 
@@ -208,18 +208,18 @@ Linking ranks candidate event pairs and returns a separate explanation for each 
 
 | Approach | Query and score | Evidence in `because` |
 |---|---|---|
-| `thread` | Walk `part_of` and `in_reply_to` in either direction, including siblings, through at most 16 edges. Score 1. Readable intermediate events may be outside the occurrence window. | `score`, `path` of event IDs from the first endpoint to the second |
-| `subject` | Join shared subject and involved entity IDs. Reuse recall rarity `log((total+1)/frequency)`, where frequency counts distinct visible events sharing that subject or involved entity. Sum rarity for distinct shared IDs, divide by `log(total+1)`, and cap at 1. | `score`, `shared` entity IDs |
+| `thread` | Follow `part_of` and `in_reply_to` parent chains through at most 16 levels with visited tracking, plus direct children and siblings under the same parent. Score 1. Readable intermediate events may be outside the occurrence window. | `score`, `path` of event IDs from the first endpoint to the second |
+| `subject` | Join shared subject and involved entity IDs. Reuse recall rarity `log((total+1)/frequency)`, where frequency counts distinct readable events sharing that subject or involved entity across the requested buckets, without occurrence or type filters. Subjects above `common_subject_share` (default 0.2, allowed range [0,1]) contribute zero and do not discover candidates. Sum rarity for distinct shared IDs, divide by `log(total+1)`, and cap at 1. | `score`, `shared` entity IDs |
 | `people` | Join shared participants. Decay by the absolute occurrence gap with a seven day half life. Requires dated events. | `score`, `shared` participant IDs |
 | `time` | Match the same readable place within 24 hours. Decay by the absolute occurrence gap with a three hour half life. Requires dated events. | `score`, `gap_seconds` |
-| `text` | Search the existing content and `why` tsvector using any of the anchor's searchable words. Use `ts_rank_cd` normalized by rank/(rank+1). | `score` |
-| `explicit` | Match stored links in either direction. Score 1 regardless of link type. | `score`, `types` of the matching stored links |
+| `text` | Search the existing content and `why` tsvector using any of the anchor's searchable words. Take the smaller of the two directional `ts_rank_cd` scores, normalized by rank/(rank+1). Postgres rank has no corpus rarity weighting, so text linking is off by default. | `score` |
+| `explicit` | Match stored links in either direction. Score 1 regardless of link type. | `score`, `links` containing each stored `{id, from, to, type}` |
 
-Default weights are `thread: 1`, `subject: 1`, `people: 0.3`, `time: 0.1`, `text: 0.1`, `explicit: 1`. The combined score is the weighted sum divided by the total enabled weight, including weights for approaches that did not match. This keeps weak time or text overlap below a thread or rare subject match. `weights` overrides individual defaults; weights must be from 0 to 1000 and at least one enabled weight must be positive. `approaches` selects the approaches to run; omitted means all six. Unknown names produce a 422 field problem for `approaches[i]` or `weights.<name>`.
+Default weights are `thread: 1`, `explicit: 1`, `subject: 0.9`, `meaning: 0.6`, `people: 0.4`, `text: 0.3`, `time: 0.2`. The combined score is noisy-OR: `1 - product(1 - weight * approach_score)` over approaches that fired. Adding evidence never lowers a score. Request weights must be within [0,1], with at least one positive enabled weight. `approaches` selects approaches; omitted enables everything except text. Unknown names produce a 422 field problem.
 
-Candidate selection runs in SQL. Per anchor, it considers up to 200 events per shared entity, 200 nearest events per participant, 200 nearest events in the same place, and 100 best text matches, together with thread and explicit matches. Results are ranked in Go and ties use endpoint IDs. Zero score pairs are omitted.
+Each approach returns at most 200 candidates per anchor, retaining an extra candidate to detect a budget cut. `truncated` lists approaches whose budgets cut candidates. Subject candidates are ordered by rarest shared subject first, then nearest occurrence time. Other structural candidates use nearest occurrence time; text uses strongest rank. Ties use endpoint IDs. Zero score pairs are omitted.
 
-`POST /v1/events/links` requires `from` and `to` as RFC 3339 times. The interval is inclusive at `from` and exclusive at `to`. Optional `buckets` has the same access restrictions as the event listing. The response includes `events` and `entities` in the same shape as `GET /v1/events`, covering the entire window, plus `links`. Undated events are excluded. Both endpoints must be in the returned events. Each undirected pair appears once with `from < to`, strongest first. `limit` caps links, defaults to 500 and is at most 10000. `min_score` is an inclusive threshold between 0 and 1. Neither listing links nor expanding neighbours rehearses the linked events.
+`POST /v1/events/links` requires RFC 3339 `from` and `to`, inclusive and exclusive respectively. Optional `buckets` narrows access. `anchors_limit` defaults to 200, with a maximum of 1000. `after` continues after the anchor event ID from `next`. Paging follows occurrence time and ID. `next` is omitted when no anchors remain, even if the current page found no links. Candidate endpoints may be outside the anchor page but must be inside the requested window. `events` contains only returned link endpoints; `entities` contains their readable involved entities. Undirected pairs use `from < to` and are ranked strongest first. A pair can recur on another anchor page. `limit` caps links, defaults to 500 and is at most 10000. `min_score` is an inclusive threshold, default 0. Neither linking nor neighbour expansion rehearses the linked events.
 
 ```json
 {
@@ -227,7 +227,9 @@ Candidate selection runs in SQL. Per anchor, it considers up to 200 events per s
   "from": "2026-10-21T00:00:00Z",
   "to": "2026-10-24T00:00:00Z",
   "approaches": ["thread", "subject"],
-  "weights": {"subject": 2},
+  "weights": {"subject": 0.9},
+  "anchors_limit": 200,
+  "common_subject_share": 0.2,
   "min_score": 0.1,
   "limit": 500
 }
@@ -243,13 +245,13 @@ Example response for a thread pair (event bodies abbreviated):
   ],
   "entities": [],
   "links": [
-    {"from":"ev_pr","to":"ev_review","score":0.3333333333333333,
+    {"from":"ev_pr","to":"ev_review","score":1,
      "because":{"thread":{"score":1,"path":["ev_pr","ev_review"]}}}
   ]
 }
 ```
 
-Recall accepts `expand.neighbours` from 0 to 100 (default 0). A positive value adds up to that many ranked linked events to each result, using all approaches and default linking weights. Neighbours obey the recall's bucket, type, occurrence and historical filters. Their evidence is returned even when recall `explain` is false. Thread paths start at the recalled event.
+Recall accepts `expand.neighbours` from 0 to 100 (default 0). A positive value adds up to that many ranked linked events to each result, using all approaches and default linking weights. Neighbours obey the recall's bucket, type, occurrence and historical filters. Their evidence is returned even when recall `explain` is false. Thread paths start at the recalled event. Type filters apply to returned endpoints; readable intermediate thread events of other types remain usable. Candidate selection is batched across all results with per anchor budgets and ranking, followed by one union read for neighbour records. A budget cut is reported in response `truncated`.
 
 ```json
 {
@@ -266,11 +268,37 @@ Example expanded result:
     {"id":"ev_pr","record":{"id":"ev_pr","bucket":"bk_shop","type":"github.pull_request"},"score":0.8,
      "neighbours":[
        {"id":"ev_review","record":{"id":"ev_review","bucket":"bk_shop","type":"github.pull_request.review","part_of":"ev_pr"},
-        "score":0.2857142857142857,
+        "score":1,
         "because":{"thread":{"score":1,"path":["ev_pr","ev_review"]}}}
      ]}
   ]
 }
+```
+
+## Meaning and vector storage
+
+`meaning` linking searches nearest event embeddings. Cosine similarity maps to `clamp((cosine - floor) / (1 - floor), 0, 1)`. The default floor is 0.6. `meaning_floor` overrides it per linking request; the value must be at least 0 and below 1. Evidence contains `{score, cosine, model}`. Recall embeds context text at read time and adds the `meaning` signal with default weight 0.6 when available. If disabled or unavailable, recall continues and lists `meaning` in `skipped`. Explain responses include `because.meaning`. Lexical recall remains enabled independently of text linking.
+
+Set `MEMORY_EMBEDDING_URL`, `MEMORY_EMBEDDING_KEY`, `MEMORY_EMBEDDING_MODEL` and `MEMORY_EMBEDDING_DIMENSIONS` to enable embeddings. The URL is an OpenAI compatible base URL; the client posts to its `/embeddings` endpoint with model, input array and dimensions. Response vectors follow data order, including responses without index or usage. Count and dimensions must match. The key is never logged. An unset URL disables meaning without requiring pgvector. `MEMORY_EMBEDDING_FLOOR` configures the default floor.
+
+The `Embedder` interface exposes model, dimensions and batch embedding. `VectorIndex` exposes upsert, nearest and delete using engine values: workspace ID, event ID, bucket ID, occurrence time, record type, model, vectors and plain filters. Neither SQL nor shared transactions cross this boundary. The optional `BatchVectorIndex` batches nearest searches; both bundled backends implement it, and Postgres executes them in one candidate query. `MEMORY_VECTOR_STORE` selects `postgres` (default) or `memory`. Another backend, such as MariaDB, implements the same interface and constructor selection, then runs the reusable vector conformance suite. MariaDB is not implemented here.
+
+The vector backend prefilters readable bucket IDs for efficiency. The engine over-fetches a bounded candidate pool and rechecks every returned ID against Postgres access and scope rules before scoring. Vector results never grant access. Extremely selective access requirements may return fewer than k results after this recheck.
+
+The Postgres backend initializes the extension and vector table idempotently at startup only when embeddings are configured. It requires pgvector 0.8 or later, supports 1 to 2000 dimensions using `vector`, and indexes cosine distance with HNSW. Model and dimensions are stored per vector; queries ignore other spaces. Approximate searches use transaction-local iterative relaxed scans with a scan tuple budget of 1000000 and exactly re-sort the selected candidates by cosine distance.
+
+Event capture atomically queues an embedding job without calling the provider. The memoryd worker reads committed events in batches of 32, using title, content and why. It writes vectors after commit, retries failures with exponential backoff capped at one hour, and marks successful jobs complete. Upserts are idempotent, and persistent pending jobs repair interrupted work. A model or dimension change requeues events at startup. The memory backend requeues all events after restart. Enabled health responses include `embedding_backlog`; disabled health responses retain status 204.
+
+Example meaning request:
+
+```json
+{"from":"2026-10-21T00:00:00Z","to":"2026-10-22T00:00:00Z","anchors_limit":200,"approaches":["meaning"],"meaning_floor":0.6}
+```
+
+Example evidence:
+
+```json
+{"from":"ev_auth_a","to":"ev_auth_b","score":0.3,"because":{"meaning":{"score":0.5,"cosine":0.8,"model":"gemini-embedding-001"}}}
 ```
 
 ## Access

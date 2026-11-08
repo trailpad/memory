@@ -13,12 +13,16 @@ import (
 type Signal string
 
 const (
+	Meaning   Signal = "meaning"
 	Relevance Signal = "relevance"
 	Cue       Signal = "cue"
 	Recency   Signal = "recency"
 )
 
 func (s Signal) known() bool {
+	if s == Meaning {
+		return true
+	}
 	_, ok := presets[""][s]
 	return ok
 }

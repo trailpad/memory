@@ -33,7 +33,7 @@ func TestEventLinkingThroughHTTP(t *testing.T) {
 	e.readers(bucket, "gh_ana")
 	e.readers(private, "gh_hana")
 	token := e.sign(e.claims("user_ana", "gh_ana"))
-	request := map[string]any{"from": "2026-10-21T00:00:00Z", "to": "2026-10-24T00:00:00Z"}
+	request := map[string]any{"approaches": []string{"thread", "explicit", "subject", "people", "time", "text"}, "common_subject_share": 0.5, "from": "2026-10-21T00:00:00Z", "to": "2026-10-24T00:00:00Z"}
 	var response struct {
 		Events []record.Event     `json:"events"`
 		Links  []recall.EventLink `json:"links"`
@@ -86,7 +86,7 @@ func TestEventLinkingThroughHTTP(t *testing.T) {
 		if !slices.Contains(l.Because["subject"].Shared, "sb_file") {
 			t.Fatalf("missing file evidence: %+v", l)
 		}
-		if l.Score <= pair("ev_pr", "ev_unrelated").Score {
+		if l.Score <= 0 {
 			t.Fatalf("file does not beat repository: %+v", l)
 		}
 	}
@@ -97,8 +97,8 @@ func TestEventLinkingThroughHTTP(t *testing.T) {
 	if pair("ev_pr", "ev_capture").Because["explicit"].Score != 1 {
 		t.Fatal("explicit link must score one")
 	}
-	if pair("ev_pr", "ev_unrelated").Score >= 0.15 {
-		t.Fatal("repository alone is too strong")
+	if _, ok := pairs[[2]string{"ev_pr", "ev_unrelated"}]; ok {
+		t.Fatal("repository alone linked events")
 	}
 	request["approaches"] = []string{"mystery"}
 	raw := e.must(422, "POST", "/v1/events/links", e.key, token, request)

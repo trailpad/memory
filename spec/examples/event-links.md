@@ -17,3 +17,5 @@ Recall continues when the provider is disabled or unavailable:
 ```json
 {"results":[],"skipped":["meaning"]}
 ```
+
+Subject filtering defaults to `common_subject_share: 0.2` and `common_subject_min: 50`. A file shared by 2 of 8 readable events contributes subject evidence. A subject shared by 60 of 100 readable events contributes none. Set `common_subject_min` to an integer of at least 1 to override the minimum.

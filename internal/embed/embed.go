@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -23,6 +24,15 @@ func (Disabled) Model() string   { return "" }
 func (Disabled) Dimensions() int { return 0 }
 func (Disabled) Embed(context.Context, []string) ([][]float32, error) {
 	return nil, errors.New("embeddings disabled")
+}
+
+type ResponseError struct {
+	Status  int
+	Excerpt string
+}
+
+func (e *ResponseError) Error() string {
+	return fmt.Sprintf("embedding response status %d: %s", e.Status, e.Excerpt)
 }
 
 type HTTP struct {
@@ -58,7 +68,22 @@ func (h *HTTP) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("embedding response status %d", resp.StatusCode)
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		excerpt := string(raw)
+		if len(raw) == 64<<10 {
+			excerpt = "provider response exceeded excerpt read limit"
+		}
+		for _, secret := range append([]string{h.Key}, texts...) {
+			if secret != "" {
+				encoded, _ := json.Marshal(secret)
+				excerpt = strings.ReplaceAll(excerpt, string(encoded[1:len(encoded)-1]), "[redacted]")
+				excerpt = strings.ReplaceAll(excerpt, secret, "[redacted]")
+			}
+		}
+		if len(excerpt) > 300 {
+			excerpt = excerpt[:300]
+		}
+		return nil, &ResponseError{Status: resp.StatusCode, Excerpt: excerpt}
 	}
 	var result struct {
 		Data []struct {

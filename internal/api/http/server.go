@@ -38,6 +38,7 @@ type Connectors interface {
 }
 
 type Server struct {
+	EmbeddingFailing func(context.Context) (int, error)
 	EmbeddingBacklog func(context.Context) (int, error)
 	Auth             *access.Authority
 	Capture          *capture.Capture
@@ -67,7 +68,15 @@ func (s *Server) Handler() http.Handler {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		_ = reply(w, http.StatusOK, map[string]int{"embedding_backlog": n})
+		failing := 0
+		if s.EmbeddingFailing != nil {
+			failing, err = s.EmbeddingFailing(r.Context())
+			if err != nil {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+		}
+		_ = reply(w, http.StatusOK, map[string]int{"embedding_backlog": n, "embedding_failing": failing})
 	})
 	mux.Handle("POST /v1/records", s.as(access.Write, s.write))
 	mux.Handle("GET /v1/entities/{id}", s.as(access.Read, s.entity))

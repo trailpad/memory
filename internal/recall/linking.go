@@ -17,6 +17,7 @@ type LinkOptions struct {
 	perAnchorLimit     int
 	AnchorsLimit       int                `json:"anchors_limit,omitempty"`
 	After              string             `json:"after,omitempty"`
+	CommonSubjectMin   *int               `json:"common_subject_min,omitempty"`
 	CommonSubjectShare *float64           `json:"common_subject_share,omitempty"`
 	MeaningFloor       *float64           `json:"meaning_floor,omitempty"`
 	Approaches         []string           `json:"approaches,omitempty"`
@@ -78,6 +79,9 @@ func (o LinkOptions) Validate() record.Problems {
 	if value := o.CommonSubjectShare; value != nil && (math.IsNaN(*value) || *value < 0 || *value > 1) {
 		add("common_subject_share", "must be between 0 and 1")
 	}
+	if o.CommonSubjectMin != nil && *o.CommonSubjectMin < 1 {
+		add("common_subject_min", "must be at least 1")
+	}
 	if value := o.MeaningFloor; value != nil && (math.IsNaN(*value) || *value < 0 || *value >= 1) {
 		add("meaning_floor", "must be at least 0 and below 1")
 	}
@@ -128,6 +132,10 @@ func (s *Service) Links(ctx context.Context, access store.Access, scope store.Sc
 		return nil, p
 	}
 	names, w := o.settings()
+	scope.CommonSubjectMin = 50
+	if o.CommonSubjectMin != nil {
+		scope.CommonSubjectMin = *o.CommonSubjectMin
+	}
 	scope.CommonSubjectShare = 0.2
 	if o.CommonSubjectShare != nil {
 		scope.CommonSubjectShare = *o.CommonSubjectShare

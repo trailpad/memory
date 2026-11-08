@@ -1,10 +1,18 @@
 package httpapi_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	httpapi "github.com/trailpad/memory/internal/api/http"
+	"github.com/trailpad/memory/internal/embed"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/trailpad/memory/internal/recall"
@@ -156,4 +164,127 @@ type untrustedIndex struct {
 func (u untrustedIndex) Nearest(ctx context.Context, workspace, model string, vector []float32, filter store.VectorFilter) ([]store.VectorMatch, error) {
 	rows, err := u.VectorIndex.Nearest(ctx, workspace, model, vector, filter)
 	return append([]store.VectorMatch{{EventID: u.id, Cosine: 1}}, rows...), err
+}
+
+func TestHTTPEmbeddingRecovery(t *testing.T) {
+	for _, status := range []int{400, 503} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			e := newEngine(t)
+			captured := loadCapturedEmbedder(t)
+			var logs bytes.Buffer
+			e.store.EmbeddingLog = slog.New(slog.NewTextHandler(&logs, nil))
+			calls := 0
+			providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				var request struct {
+					Input []string `json:"input"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+					w.WriteHeader(400)
+					return
+				}
+				for _, text := range request.Input {
+					if text == "" {
+						w.WriteHeader(400)
+						_, _ = w.Write([]byte(`{"error":"empty input"}`))
+						return
+					}
+				}
+				for _, text := range request.Input {
+					if text == "rejected-input" {
+						w.WriteHeader(status)
+						_, _ = w.Write([]byte("invalid rejected-input credential-test " + strings.Repeat("x", 400)))
+						return
+					}
+				}
+				vectors, err := captured.Embed(r.Context(), request.Input)
+				if err != nil {
+					t.Error(err)
+					w.WriteHeader(400)
+					return
+				}
+				data := []map[string]any{}
+				for _, v := range vectors {
+					data = append(data, map[string]any{"embedding": v})
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
+			}))
+			defer providerServer.Close()
+			provider := &embed.HTTP{URL: providerServer.URL, Key: "credential-test", ModelName: captured.Model(), Size: 768}
+			index := store.NewMemoryVectorIndex()
+			bucket := e.repository("repo_worker", "ev_seed", captured.texts[0])
+			events := []map[string]any{{"bucket": bucket, "id": "ev_empty", "type": "github.push"}, {"bucket": bucket, "id": "ev_good", "type": "observation", "title": captured.texts[1]}, {"bucket": bucket, "id": "ev_bad", "type": "observation", "title": "rejected-input"}}
+			e.must(200, "POST", "/v1/records", e.key, "", map[string]any{"events": events})
+			if err := e.store.PrepareEmbeddings(t.Context(), provider, false); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := e.store.EmbedBatch(t.Context(), provider, index); err == nil {
+				t.Fatal("expected provider failure")
+			}
+			var complete bool
+			var attempts int
+			if err := e.store.Pool().QueryRow(t.Context(), `select complete,attempts from embedding_jobs where event_id='ev_empty'`).Scan(&complete, &attempts); err != nil {
+				t.Fatal(err)
+			}
+			if !complete || attempts != 0 {
+				t.Fatalf("empty job: %v %d", complete, attempts)
+			}
+			expectedFailing := 1
+			if status == 503 {
+				expectedFailing = 3
+			}
+			failing, err := e.store.EmbeddingFailing(t.Context())
+			if err != nil || failing != expectedFailing {
+				t.Fatalf("failing: %d %v", failing, err)
+			}
+			health := httptest.NewServer((&httpapi.Server{EmbeddingBacklog: e.store.EmbeddingBacklog, EmbeddingFailing: e.store.EmbeddingFailing}).Handler())
+			defer health.Close()
+			resp, err := http.Get(health.URL + "/healthz")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			var counts map[string]int
+			if err := json.NewDecoder(resp.Body).Decode(&counts); err != nil {
+				t.Fatal(err)
+			}
+			if counts["embedding_backlog"] != expectedFailing || counts["embedding_failing"] != expectedFailing {
+				t.Fatalf("health: %v", counts)
+			}
+			matches, err := index.Nearest(t.Context(), "ws_acme", provider.Model(), captured.vectors[1], store.VectorFilter{Buckets: []string{bucket}, K: 10})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if status == 400 && (len(matches) != 2 || calls != 4) {
+				t.Fatalf("isolated batch: vectors=%d calls=%d", len(matches), calls)
+			}
+			if status == 503 && (len(matches) != 0 || calls != 1) {
+				t.Fatalf("server failure: vectors=%d calls=%d", len(matches), calls)
+			}
+			for _, match := range matches {
+				if match.EventID == "ev_empty" {
+					t.Fatal("empty event has vector")
+				}
+			}
+			output := logs.String()
+			if !strings.Contains(output, "level=WARN") || !strings.Contains(output, fmt.Sprintf("status=%d", status)) || !strings.Contains(output, "invalid") {
+				t.Fatalf("missing warning: %s", output)
+			}
+			for _, secret := range append(captured.texts, "rejected-input", "credential-test") {
+				if strings.Contains(output, secret) {
+					t.Fatal("log contains request data")
+				}
+			}
+			for i := 0; i < 6; i++ {
+				if _, err := e.store.Pool().Exec(t.Context(), `update embedding_jobs set retry_at=now() where not complete`); err != nil {
+					t.Fatal(err)
+				}
+				_, _ = e.store.EmbedBatch(t.Context(), provider, index)
+			}
+			if strings.Count(logs.String(), "level=WARN") != 5 {
+				t.Fatalf("warning cap: %s", logs.String())
+			}
+		})
+	}
 }

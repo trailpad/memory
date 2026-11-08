@@ -29,7 +29,7 @@ func TestLinkContractThroughHTTP(t *testing.T) {
 		Events []record.Event     `json:"events"`
 		Next   string             `json:"next"`
 	}
-	request := map[string]any{"buckets": []string{bucket}, "from": "2026-10-21T00:00:00Z", "to": "2026-10-23T00:00:00Z", "approaches": []string{"subject"}}
+	request := map[string]any{"buckets": []string{bucket}, "from": "2026-10-21T00:00:00Z", "to": "2026-10-23T00:00:00Z", "approaches": []string{"subject"}, "common_subject_min": 1}
 	call := func() response {
 		t.Helper()
 		raw := e.must(200, "POST", "/v1/events/links", e.key, token, request)

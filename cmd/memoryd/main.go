@@ -171,10 +171,12 @@ func serve(ctx context.Context, s *postgres.Store) error {
 			semantic.MeaningFloor = &floor
 		}
 		backlog = s.EmbeddingBacklog
+		s.EmbeddingLog = log
 		go s.RunEmbeddings(ctx, provider, index)
 	}
 	api := &httpapi.Server{
 		EmbeddingBacklog: backlog,
+		EmbeddingFailing: s.EmbeddingFailing,
 		Auth:             &access.Authority{Directory: s, Audience: audience},
 		Capture:          &capture.Capture{Store: s, Profiles: profiles},
 		Recall:           semantic,

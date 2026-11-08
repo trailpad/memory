@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"testing"
 
@@ -33,7 +34,7 @@ func TestEventLinkingThroughHTTP(t *testing.T) {
 	e.readers(bucket, "gh_ana")
 	e.readers(private, "gh_hana")
 	token := e.sign(e.claims("user_ana", "gh_ana"))
-	request := map[string]any{"approaches": []string{"thread", "explicit", "subject", "people", "time", "text"}, "common_subject_share": 0.5, "from": "2026-10-21T00:00:00Z", "to": "2026-10-24T00:00:00Z"}
+	request := map[string]any{"approaches": []string{"thread", "explicit", "subject", "people", "time", "text"}, "common_subject_share": 0.5, "common_subject_min": 1, "from": "2026-10-21T00:00:00Z", "to": "2026-10-24T00:00:00Z"}
 	var response struct {
 		Events []record.Event     `json:"events"`
 		Links  []recall.EventLink `json:"links"`
@@ -135,5 +136,47 @@ func TestEventLinkingThroughHTTP(t *testing.T) {
 	}
 	if !seen {
 		t.Fatalf("review missing from expanded recall: %s", raw)
+	}
+}
+
+func TestSubjectMinimumThroughHTTP(t *testing.T) {
+	for _, size := range []int{8, 100} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			e := newEngine(t)
+			bucket := e.repository("repo_subject", "ev_seed", "Seed")
+			events := []map[string]any{}
+			frequency := 2
+			if size == 100 {
+				frequency = 60
+			}
+			for i := 0; i < size-1; i++ {
+				ev := map[string]any{"bucket": bucket, "id": fmt.Sprintf("ev_item_%03d", i), "type": "github.push", "occurred_at": "2026-10-21T12:00:00Z"}
+				if i < frequency {
+					ev["subjects"] = []map[string]string{{"subject": "sb_file", "role": "about"}}
+				}
+				events = append(events, ev)
+			}
+			e.must(200, "POST", "/v1/records", e.key, "", map[string]any{"entities": []map[string]any{{"bucket": bucket, "id": "sb_file", "class": "subject", "type": "code.path"}}, "events": events})
+			e.readers(bucket, "gh_ana")
+			token := e.sign(e.claims("user_ana", "gh_ana"))
+			request := map[string]any{"buckets": []string{bucket}, "approaches": []string{"subject"}, "anchors_limit": 2, "from": "2026-10-21T00:00:00Z", "to": "2026-10-22T00:00:00Z"}
+			var result struct {
+				Links []recall.EventLink `json:"links"`
+			}
+			raw := e.must(200, "POST", "/v1/events/links", e.key, token, request)
+			if err := json.Unmarshal(raw, &result); err != nil {
+				t.Fatal(err)
+			}
+			if size == 8 && (len(result.Links) != 1 || !slices.Contains(result.Links[0].Because["subject"].Shared, "sb_file")) {
+				t.Fatalf("small bucket: %s", raw)
+			}
+			if size == 100 && len(result.Links) != 0 {
+				t.Fatalf("common subject: %s", raw)
+			}
+			for _, invalid := range []any{0, -1, 1.5} {
+				request["common_subject_min"] = invalid
+				e.must(422, "POST", "/v1/events/links", e.key, token, request)
+			}
+		})
 	}
 }

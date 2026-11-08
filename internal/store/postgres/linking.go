@@ -24,7 +24,7 @@ func (s *Store) LinkCandidates(ctx context.Context, access store.Access, scope s
 	global.Types = nil
 	graph := strings.Replace(q.visible(access, global), "select e.id, 0 as version", "select e.*", 1)
 	graph = strings.Replace(graph, "visible as (", "graph as not materialized (", 1)
-	replace := strings.NewReplacer("@visible", visible, "@graph", graph, "@ws", q.arg(access.Workspace), "@read", q.arg(access.Read), "@anchors", q.arg(anchors), "@enabled", q.arg(approaches), "@asof", q.arg(scope.AsOf), "@cutoff", q.arg(scope.CommonSubjectShare))
+	replace := strings.NewReplacer("@visible", visible, "@graph", graph, "@ws", q.arg(access.Workspace), "@read", q.arg(access.Read), "@anchors", q.arg(anchors), "@enabled", q.arg(approaches), "@asof", q.arg(scope.AsOf), "@minimum", q.arg(scope.CommonSubjectMin), "@cutoff", q.arg(scope.CommonSubjectShare))
 	header := `with recursive @visible,@graph,
  a as (select * from v where id=any(@anchors::text[])),
  anchor_subjects as (select distinct i.entity_id from a join involvements i on i.workspace_id=@ws and i.record_type='event' and i.record_id=a.id and i.via in ('subject','involves')
@@ -57,7 +57,7 @@ func (s *Store) LinkCandidates(ctx context.Context, access store.Access, scope s
  from involvements i join frequencies f on f.entity_id=i.entity_id
  join involvements u on u.workspace_id=@ws and u.entity_id=i.entity_id and u.via in ('subject','involves') and u.record_type='event' and u.record_id<>a.id
  join v b on b.id=u.record_id cross join total
- where i.workspace_id=@ws and i.record_id=a.id and i.record_type='event' and i.via in ('subject','involves') and f.n::float8/greatest(total.n,1)<=@cutoff`, `candidate.frequency,`+nearest)
+ where i.workspace_id=@ws and i.record_id=a.id and i.record_type='event' and i.via in ('subject','involves') and (f.n<@minimum or f.n::float8/greatest(total.n,1)<=@cutoff)`, `candidate.frequency,`+nearest)
 	add("people", `select distinct b.id,array[i.entity_id],array[]::text[],abs(extract(epoch from (b.occurred_at-a.occurred_at)))::float8,0::int,''::text,''::text,''::text,''::text
  from involvements i join entities x on x.workspace_id=@ws and x.id=i.entity_id and x.requires <@ @read
  join involvements u on u.workspace_id=@ws and u.entity_id=i.entity_id and u.via='participant' and u.record_type='event' and u.record_id<>a.id

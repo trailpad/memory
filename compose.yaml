@@ -3,6 +3,12 @@ services:
     build: .
     environment:
       MEMORY_DATABASE_URL: postgres://memory:memory@db:5432/memory?sslmode=disable
+      # MEMORY_EMBEDDING_URL: https://provider.example/v1
+      # MEMORY_EMBEDDING_KEY: your-api-key-here
+      # MEMORY_EMBEDDING_MODEL: your-model-here
+      # MEMORY_EMBEDDING_DIMENSIONS: "768"
+      # MEMORY_EMBEDDING_FLOOR: "0.6"
+      # MEMORY_VECTOR_STORE: postgres
     ports:
       - "8090:8080"
     depends_on:

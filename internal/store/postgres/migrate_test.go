@@ -21,6 +21,7 @@ func exists(t *testing.T, s *postgres.Store, table string) bool {
 
 func TestMigrationsGoDownAndBackUp(t *testing.T) {
 	s := pgtest.ForTest(t)
+	rollbackTo(t, s, 7)
 	if err := s.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -56,6 +57,7 @@ func TestMigrationsGoDownAndBackUp(t *testing.T) {
 
 func TestEpisodicMigrationPreservesEvents(t *testing.T) {
 	s := pgtest.ForTest(t)
+	rollbackTo(t, s, 7)
 	if err := s.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -109,6 +111,7 @@ func TestEpisodicMigrationPreservesEvents(t *testing.T) {
 
 func TestRecordTypeMigrationRoundTrip(t *testing.T) {
 	s := pgtest.ForTest(t)
+	rollbackTo(t, s, 7)
 	if err := s.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -170,6 +173,7 @@ func TestRecordTypeMigrationRoundTrip(t *testing.T) {
 
 func TestBucketCaptureMigrationPreservesRecords(t *testing.T) {
 	s := pgtest.ForTest(t)
+	rollbackTo(t, s, 7)
 	ctx := t.Context()
 	if err := s.Rollback(ctx); err != nil {
 		t.Fatal(err)
@@ -201,6 +205,22 @@ func TestBucketCaptureMigrationPreservesRecords(t *testing.T) {
 		event, err := s.Event(ctx, access, "ev_capture")
 		if err != nil || event.Bucket != "bk_capture" || event.Source.NativeID != "delivery" || event.Place != "pl_capture" {
 			t.Fatalf("event after migration: %+v, %v", event, err)
+		}
+	}
+}
+
+func rollbackTo(t *testing.T, s *postgres.Store, version int) {
+	t.Helper()
+	for {
+		var current int
+		if err := s.Pool().QueryRow(t.Context(), `select coalesce(max(version),0) from schema_migrations`).Scan(&current); err != nil {
+			t.Fatal(err)
+		}
+		if current <= version {
+			return
+		}
+		if err := s.Rollback(t.Context()); err != nil {
+			t.Fatal(err)
 		}
 	}
 }

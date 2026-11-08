@@ -6,9 +6,12 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/trailpad/memory/internal/store"
@@ -19,7 +22,11 @@ var migrations embed.FS
 
 // Store is a store.Store over a PostgreSQL pool.
 type Store struct {
-	pool *pgxpool.Pool
+	pool              *pgxpool.Pool
+	EmbeddingLog      *slog.Logger
+	embeddingLogMu    sync.Mutex
+	embeddingLogAt    time.Time
+	embeddingLogCount int
 }
 
 // Open connects and brings the schema up to date.

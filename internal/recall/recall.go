@@ -6,38 +6,46 @@ import (
 	"sort"
 	"time"
 
+	"github.com/trailpad/memory/internal/embed"
 	"github.com/trailpad/memory/internal/profile"
 	"github.com/trailpad/memory/internal/store"
 )
 
 // Service runs recalls against a store.
 type Service struct {
-	Store    store.Recaller
-	Profiles *profile.Registry
+	Embedder     embed.Embedder
+	Vectors      store.VectorIndex
+	MeaningFloor *float64
+	Store        store.Recaller
+	Profiles     *profile.Registry
 	// Now is the clock; nil is the system clock.
 	Now func() time.Time
 }
 
 // Response is what a recall returns, best first.
 type Response struct {
-	Results []Result `json:"results"`
+	Skipped   []string `json:"skipped,omitempty"`
+	Truncated []string `json:"truncated,omitempty"`
+	Results   []Result `json:"results"`
 }
 
 // Result is one record and why it came back.
 type Result struct {
-	ID      string   `json:"id"`
-	Record  any      `json:"record"`
-	Score   float64  `json:"score"`
-	Because *Because `json:"because,omitempty"`
+	Neighbours []Neighbour `json:"neighbours,omitempty"`
+	ID         string      `json:"id"`
+	Record     any         `json:"record"`
+	Score      float64     `json:"score"`
+	Because    *Because    `json:"because,omitempty"`
 }
 
 // Because is each signal on its own, the cues shared and the path from the
 // context to the record.
 type Because struct {
-	Relevance float64  `json:"relevance"`
-	Cue       CueMatch `json:"cue"`
-	Recency   float64  `json:"recency"`
-	Path      []string `json:"path,omitempty"`
+	Meaning   *LinkEvidence `json:"meaning,omitempty"`
+	Relevance float64       `json:"relevance"`
+	Cue       CueMatch      `json:"cue"`
+	Recency   float64       `json:"recency"`
+	Path      []string      `json:"path,omitempty"`
 }
 
 // CueMatch is the cue signal and the cues behind it, strongest first.
@@ -59,6 +67,7 @@ func (s *Service) Recall(ctx context.Context, access store.Access, req Request) 
 	if problems := req.Validate(); len(problems) > 0 {
 		return Response{}, problems
 	}
+	ctx = store.WithLinkTruncation(ctx)
 	now := s.now()
 	at := now
 	switch {
@@ -80,6 +89,29 @@ func (s *Service) Recall(ctx context.Context, access store.Access, req Request) 
 		return Response{}, err
 	}
 
+	skipped := []string{}
+	semantic := map[string]store.VectorMatch{}
+	if req.Context.Text != "" {
+		if s.Embedder == nil || s.Vectors == nil {
+			skipped = append(skipped, "meaning")
+		} else {
+			vectors, embeddingErr := s.Embedder.Embed(ctx, []string{req.Context.Text})
+			if embeddingErr != nil {
+				skipped = append(skipped, "meaning")
+			} else {
+				matches, searchErr := s.nearest(ctx, access, scope, vectors[0], pool)
+				if searchErr != nil {
+					skipped = append(skipped, "meaning")
+				} else {
+					for _, m := range matches {
+						if meaningScore(m.Cosine, s.floor()) > 0 {
+							semantic[m.EventID] = m
+						}
+					}
+				}
+			}
+		}
+	}
 	// The context's cues reach upward: a thread in the context also shares
 	// its pull request with records elsewhere on it.
 	cues := req.cues()
@@ -140,8 +172,14 @@ func (s *Service) Recall(ctx context.Context, access store.Access, req Request) 
 			candidates = append(candidates, t.Ref)
 		}
 	}
+	for id := range semantic {
+		if !seen[id] {
+			seen[id] = true
+			candidates = append(candidates, store.Ref{ID: id})
+		}
+	}
 	if len(candidates) == 0 {
-		return Response{Results: []Result{}}, nil
+		return Response{Results: []Result{}, Skipped: skipped}, nil
 	}
 
 	touches, err := s.Store.Touches(ctx, access, scope, present, candidates, 0)
@@ -198,6 +236,14 @@ func (s *Service) Recall(ctx context.Context, access store.Access, req Request) 
 	}
 
 	w := weights(req)
+	if len(skipped) > 0 {
+		delete(w, Meaning)
+	}
+	if len(semantic) > 0 {
+		if _, ok := req.Weights[Meaning]; !ok {
+			w[Meaning] = 0.6
+		}
+	}
 	results := make([]Result, 0, len(found))
 	for _, f := range found {
 		id := f.Ref.ID
@@ -206,10 +252,17 @@ func (s *Service) Recall(ctx context.Context, access store.Access, req Request) 
 			Cue:       cue[id],
 			Recency:   recency(f.Happened, lastUsed(f, at), at, s.halfLife(f, resolvers[id])),
 		}
+		if m, ok := semantic[id]; ok {
+			signals[Meaning] = meaningScore(m.Cosine, s.floor())
+		}
 		res := Result{ID: id, Score: combine(signals, w)}
 		res.Record = f.Event
 		if req.Explain {
 			because := &Because{Relevance: signals[Relevance], Cue: CueMatch{Score: signals[Cue]}, Recency: signals[Recency]}
+			if m, ok := semantic[id]; ok {
+				cosine := m.Cosine
+				because.Meaning = &LinkEvidence{Score: signals[Meaning], Cosine: &cosine, Model: s.Embedder.Model()}
+			}
 			shared := make([]strongest, 0, len(best[id]))
 			for _, b := range best[id] {
 				shared = append(shared, b)
@@ -240,6 +293,11 @@ func (s *Service) Recall(ctx context.Context, access store.Access, req Request) 
 	if len(results) > limit {
 		results = results[:limit]
 	}
+	if req.Expand.Neighbours > 0 {
+		if err := s.neighbours(ctx, access, scope, results, req.Expand.Neighbours); err != nil {
+			return Response{}, err
+		}
+	}
 	if req.AsOf == nil && req.Context.At == nil {
 		ids := make([]string, len(results))
 		for i, r := range results {
@@ -249,7 +307,7 @@ func (s *Service) Recall(ctx context.Context, access store.Access, req Request) 
 			return Response{}, err
 		}
 	}
-	return Response{Results: results}, nil
+	return Response{Results: results, Skipped: skipped, Truncated: store.LinkTruncation(ctx)}, nil
 }
 
 // Use records that results were useful, which keeps them fresher in later

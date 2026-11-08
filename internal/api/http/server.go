@@ -38,13 +38,15 @@ type Connectors interface {
 }
 
 type Server struct {
-	Auth       *access.Authority
-	Capture    *capture.Capture
-	Recall     *recall.Service
-	Store      store.Store
-	Connectors Connectors
-	Log        *slog.Logger
-	Now        func() time.Time
+	EmbeddingFailing func(context.Context) (int, error)
+	EmbeddingBacklog func(context.Context) (int, error)
+	Auth             *access.Authority
+	Capture          *capture.Capture
+	Recall           *recall.Service
+	Store            store.Store
+	Connectors       Connectors
+	Log              *slog.Logger
+	Now              func() time.Time
 }
 
 func (s *Server) now() time.Time {
@@ -56,9 +58,29 @@ func (s *Server) now() time.Time {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		if s.EmbeddingBacklog == nil {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		n, err := s.EmbeddingBacklog(r.Context())
+		if err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		failing := 0
+		if s.EmbeddingFailing != nil {
+			failing, err = s.EmbeddingFailing(r.Context())
+			if err != nil {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+		}
+		_ = reply(w, http.StatusOK, map[string]int{"embedding_backlog": n, "embedding_failing": failing})
+	})
 	mux.Handle("POST /v1/records", s.as(access.Write, s.write))
 	mux.Handle("GET /v1/entities/{id}", s.as(access.Read, s.entity))
+	mux.Handle("POST /v1/events/links", s.as(access.Read, s.eventLinks))
 	mux.Handle("GET /v1/events", s.as(access.Read, s.events))
 	mux.Handle("GET /v1/events/{id}", s.as(access.Read, s.event))
 	mux.Handle("POST /v1/recall", s.as(access.Read, s.recall))

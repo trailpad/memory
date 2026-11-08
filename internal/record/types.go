@@ -86,6 +86,7 @@ type Utterance struct {
 }
 
 type Event struct {
+	Title        string        `json:"title,omitempty"`
 	Bucket       string        `json:"bucket"`
 	ID           string        `json:"id"`
 	Type         Type          `json:"type"`

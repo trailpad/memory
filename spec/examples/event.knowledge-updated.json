@@ -1,6 +1,7 @@
 {
   "bucket": "bk_shop",
   "id": "ev_policy_updated",
+  "title": "Knowledge updated",
   "type": "knowledge.updated",
   "occurred_at": "2026-04-19T14:02:11Z",
   "why": "The gateway rejected clients after five failed calls.",
@@ -23,5 +24,11 @@
     "knowledge.after": {
       "text": "Retry three times."
     }
-  }
+  },
+  "involves": [
+    {
+      "entity": "sb_retry_file",
+      "role": "about"
+    }
+  ]
 }

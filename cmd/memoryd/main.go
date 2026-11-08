@@ -10,10 +10,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/trailpad/memory/internal/embed"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -128,13 +131,58 @@ func serve(ctx context.Context, s *postgres.Store) error {
 	if addr == "" {
 		addr = ":8080"
 	}
+	semantic := &recall.Service{Store: s, Profiles: profiles}
+	var backlog func(context.Context) (int, error)
+	if url := os.Getenv("MEMORY_EMBEDDING_URL"); url != "" {
+		dimensions, err := strconv.Atoi(os.Getenv("MEMORY_EMBEDDING_DIMENSIONS"))
+		if err != nil || dimensions < 1 || dimensions > 2000 {
+			return errors.New("MEMORY_EMBEDDING_DIMENSIONS must be between 1 and 2000")
+		}
+		model := os.Getenv("MEMORY_EMBEDDING_MODEL")
+		if model == "" {
+			return errors.New("MEMORY_EMBEDDING_MODEL is required when embeddings are enabled")
+		}
+		provider := &embed.HTTP{URL: url, Key: os.Getenv("MEMORY_EMBEDDING_KEY"), ModelName: model, Size: dimensions}
+		var index store.VectorIndex
+		backend := os.Getenv("MEMORY_VECTOR_STORE")
+		switch backend {
+		case "", "postgres":
+			index, err = s.NewVectorIndex(ctx, dimensions)
+		case "memory":
+			index = store.NewMemoryVectorIndex()
+		default:
+			return errors.New("MEMORY_VECTOR_STORE must be postgres or memory")
+		}
+		if err != nil {
+			return err
+		}
+		if err := s.PrepareEmbeddings(ctx, provider, backend == "memory"); err != nil {
+			return err
+		}
+		semantic.Embedder = provider
+		semantic.Vectors = index
+		defaultFloor := 0.6
+		semantic.MeaningFloor = &defaultFloor
+		if raw := os.Getenv("MEMORY_EMBEDDING_FLOOR"); raw != "" {
+			floor, err := strconv.ParseFloat(raw, 64)
+			if err != nil || math.IsNaN(floor) || floor < 0 || floor >= 1 {
+				return errors.New("MEMORY_EMBEDDING_FLOOR must be at least 0 and below 1")
+			}
+			semantic.MeaningFloor = &floor
+		}
+		backlog = s.EmbeddingBacklog
+		s.EmbeddingLog = log
+		go s.RunEmbeddings(ctx, provider, index)
+	}
 	api := &httpapi.Server{
-		Auth:       &access.Authority{Directory: s, Audience: audience},
-		Capture:    &capture.Capture{Store: s, Profiles: profiles},
-		Recall:     &recall.Service{Store: s, Profiles: profiles},
-		Store:      s,
-		Connectors: s,
-		Log:        log,
+		EmbeddingBacklog: backlog,
+		EmbeddingFailing: s.EmbeddingFailing,
+		Auth:             &access.Authority{Directory: s, Audience: audience},
+		Capture:          &capture.Capture{Store: s, Profiles: profiles},
+		Recall:           semantic,
+		Store:            s,
+		Connectors:       s,
+		Log:              log,
 	}
 	srv := &http.Server{
 		Addr:              addr,

@@ -14,6 +14,8 @@ type Ref struct {
 // Scope is which records a recall may see. Every candidate query applies it,
 // so a record outside it is never found, counted or returned.
 type Scope struct {
+	CommonSubjectMin   int
+	CommonSubjectShare float64
 	// AsOf answers as the store stood then, on the recorded clock. Nil is now.
 	AsOf *time.Time
 	// Types keeps records whose type is one of these or falls back to one,
@@ -60,6 +62,7 @@ type Found struct {
 // candidates; ranking them is recall's job. Nothing the access may not read
 // is found, counted, walked through or returned.
 type Recaller interface {
+	Linker
 	// Text is records whose words match, best text match first.
 	Text(ctx context.Context, access Access, scope Scope, text string, limit int) ([]Scored, error)
 	// Ancestors is each entity and every parent above it, the entity itself

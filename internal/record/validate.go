@@ -109,6 +109,9 @@ func (e Event) Validate() Problems {
 	c.id("id", e.ID)
 	c.id("bucket", e.Bucket)
 	c.typ("type", e.Type)
+	if utf8.RuneCountInString(e.Title) > 8192 {
+		c.add("title", "must be at most 8192 characters")
+	}
 	if utf8.RuneCountInString(e.Why) > 8192 {
 		c.add("why", "must be at most 8192 characters")
 	}

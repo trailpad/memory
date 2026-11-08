@@ -108,8 +108,8 @@ func (r Request) Validate() record.Problems {
 			add(f.field, "is not supported yet")
 		}
 	}
-	if r.Expand.Neighbours != 0 {
-		add("expand.neighbours", "is not supported yet")
+	if r.Expand.Neighbours < 0 || r.Expand.Neighbours > MaxLimit {
+		add("expand.neighbours", "must be between 0 and %d", MaxLimit)
 	}
 	if r.Use != "" {
 		if _, ok := presets[r.Use]; !ok {
